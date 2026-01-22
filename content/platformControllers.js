@@ -81,6 +81,20 @@ const OpenSyncPlatformControllers = (function () {
             }
         },
 
+        youtube: {
+            name: 'YouTube',
+            hostnames: ['youtube.com', 'www.youtube.com', 'youtu.be'],
+            videoSelectors: [
+                'video.html5-main-video',
+                'video'
+            ],
+            useShadowDOM: false,
+            quirks: {
+                waitForReady: true,
+                minDuration: 5 // Skip very short clips/ads if possible
+            }
+        },
+
         hotstar: {
             name: 'Disney+ Hotstar',
             hostnames: ['hotstar.com', 'www.hotstar.com'],

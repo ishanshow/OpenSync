@@ -51,12 +51,41 @@ document.addEventListener('DOMContentLoaded', async () => {
             const isValidPage = tabInfo.url && (tabInfo.url.startsWith('http://') || tabInfo.url.startsWith('https://') || tabInfo.url.startsWith('file://'));
             canUsePopSync = isValidPage;
 
+            // Auto-detect platform
+            if (isValidPage) {
+                const url = new URL(tabInfo.url);
+                const hostname = url.hostname.toLowerCase();
+
+                if (hostname.includes('youtube') || hostname.includes('youtu.be')) {
+                    selectedPlatform = 'youtube';
+                } else if (hostname.includes('netflix')) {
+                    selectedPlatform = 'netflix';
+                } else if (hostname.includes('primevideo') || hostname.includes('amazon')) {
+                    selectedPlatform = 'primevideo';
+                } else if (hostname.includes('hotstar')) {
+                    selectedPlatform = 'hotstar';
+                }
+
+                // If platform detected, auto-select UI
+                if (selectedPlatform) {
+                    const card = document.querySelector(`.platform-card[data-platform="${selectedPlatform}"]`);
+                    if (card) {
+                        // Wait for DOM
+                        setTimeout(() => {
+                            platformCards.forEach(c => c.classList.remove('selected'));
+                            card.classList.add('selected');
+                            createRoomBtn.disabled = false;
+                        }, 100);
+                    }
+                }
+            }
+
             // Check for existing room
             if (state.currentRoom) {
                 currentRoom = state.currentRoom;
             }
 
-            console.log('[OpenSync Popup] Init:', { canUsePopSync, activeTabId, currentRoom });
+            console.log('[OpenSync Popup] Init:', { canUsePopSync, activeTabId, currentRoom, selectedPlatform });
             updateUI();
         } catch (error) {
             console.error('[OpenSync Popup] Init error:', error);

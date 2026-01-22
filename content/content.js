@@ -113,7 +113,17 @@
 
                         const connected = await connectToServer(serverUrl);
                         if (connected) {
+                            console.log('[OpenSync] Rejoining room:', data.roomCode);
                             OpenSyncWebSocketClient.joinRoom(data.roomCode, username);
+
+                            // If we just redirected (auto-followed), request sync immediately
+                            if (sessionStorage.getItem('opensync_just_switched_url')) {
+                                sessionStorage.removeItem('opensync_just_switched_url');
+                                setTimeout(() => {
+                                    console.log('[OpenSync] Requesting immediate sync after redirect');
+                                    OpenSyncWebSocketClient.requestSync();
+                                }, 1000);
+                            }
                         }
                     }
                 } catch (e) {
@@ -668,8 +678,8 @@
 
     // URL Sync Logic
     function checkUrl() {
-        // Skip URL Sync for platforms where it causes issues
-        if (currentPlatform === 'primevideo' || currentPlatform === 'hotstar') {
+        // Skip URL Sync for platforms where it causes issues (except YouTube)
+        if ((currentPlatform === 'primevideo' || currentPlatform === 'hotstar') && currentPlatform !== 'youtube') {
             return;
         }
 
@@ -681,10 +691,13 @@
 
                 // If path is same but only params/hash changed, ignore sync
                 // This prevents infinite loops on sites like Prime that update params for playback position
-                if (currentUrlObj.pathname === lastUrlObj.pathname &&
-                    currentUrlObj.origin === lastUrlObj.origin) {
-                    lastKnownUrl = window.location.href; // Update local tracker but don't broadcast
-                    return;
+                // YouTube: allow param changes (v=...)
+                if (currentPlatform !== 'youtube') {
+                    if (currentUrlObj.pathname === lastUrlObj.pathname &&
+                        currentUrlObj.origin === lastUrlObj.origin) {
+                        lastKnownUrl = window.location.href; // Update local tracker but don't broadcast
+                        return;
+                    }
                 }
             } catch (e) { }
 
@@ -707,8 +720,17 @@
                 if (newUrl.origin === window.location.origin) {
                     // Check if we are already effectively on this page (ignoring params)
                     const currentUrlObj = new URL(window.location.href);
-                    if (newUrl.pathname === currentUrlObj.pathname) {
+                    if (newUrl.pathname === currentUrlObj.pathname && currentPlatform !== 'youtube') {
                         console.log('[OpenSync] Ignoring remote URL change (same path):', payload.url);
+                        return;
+                    }
+
+                    // Auto-redirect for YouTube
+                    if (currentPlatform === 'youtube') {
+                        console.log('[OpenSync] YouTube Auto-Redirect to:', payload.url);
+                        sessionStorage.setItem('opensync_redirect', 'true');
+                        sessionStorage.setItem('opensync_just_switched_url', 'true');
+                        window.location.href = payload.url;
                         return;
                     }
 
@@ -719,7 +741,6 @@
                             `Host changed URL. <a href="${payload.url}" style="color: #4CAF50; text-decoration: underline;">Click to Follow</a>`
                         );
                     }
-                    // window.location.href = payload.url;
                 } else {
                     console.warn('[OpenSync] Blocked redirect to different origin:', payload.url);
                 }
@@ -730,6 +751,14 @@
     }
 
     // Start initialization
+    // Ensure platform is known
+    if (window.OpenSyncPlatformControllers && !currentPlatform) {
+        currentPlatform = window.OpenSyncPlatformControllers.detectPlatform();
+        if (currentPlatform) {
+            console.log('[OpenSync] Auto-detected platform on load:', currentPlatform);
+        }
+    }
+
     init();
 
     // Re-detect video on navigation (for SPAs)
@@ -740,8 +769,17 @@
             if (currentUrl !== lastUrl) {
                 lastUrl = currentUrl;
                 console.log('[OpenSync] URL changed, re-detecting video');
+                // Re-detect platform too
+                if (window.OpenSyncPlatformControllers) {
+                    const newPlatform = window.OpenSyncPlatformControllers.detectPlatform();
+                    if (newPlatform && newPlatform !== currentPlatform) {
+                        currentPlatform = newPlatform;
+                        OpenSyncVideoController.setPlatform(currentPlatform);
+                    }
+                }
+
                 setTimeout(() => {
-                    OpenSyncVideoController.redetect();
+                    OpenSyncVideoController.redetect(currentPlatform);
                 }, 1000);
             }
         }).observe(document, { subtree: true, childList: true });

@@ -213,6 +213,19 @@ function handleJoinRoom(ws, clientData, payload) {
         console.log(`[OpenSync Server] Room ${roomCode} deletion cancelled (user joined)`);
     }
 
+    // Cleanup existing sessions for this username (prevent duplicates on reload)
+    for (const [existingWs, existingClient] of room.clients.entries()) {
+        if (existingClient.username === username && existingWs !== ws) {
+            console.log(`[OpenSync Server] Removing duplicate session for ${username}`);
+            // Remove from room map but don't broadcast leave yet (we'll just replace)
+            room.clients.delete(existingWs);
+            // Close old socket
+            if (existingWs.readyState === WebSocket.OPEN) {
+                existingWs.close(); // This might trigger onClose -> handleLeave, so we need to be careful
+            }
+        }
+    }
+
     clientData.roomCode = roomCode;
     clientData.username = username;
     clientData.isHost = false;
