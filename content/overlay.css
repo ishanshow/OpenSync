@@ -1,0 +1,411 @@
+/* OpenSync Overlay Styles */
+
+#opensync-overlay {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    line-height: 1.4;
+    z-index: 2147483647;
+}
+
+/* Sync Indicator */
+.opensync-indicator {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: linear-gradient(135deg, rgba(13, 13, 15, 0.95), rgba(30, 30, 36, 0.95));
+    border: 1px solid rgba(124, 58, 237, 0.3);
+    border-radius: 50px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 30px rgba(124, 58, 237, 0.15);
+    backdrop-filter: blur(10px);
+    z-index: 2147483647;
+    animation: opensync-slideIn 0.3s ease;
+}
+
+@keyframes opensync-slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.opensync-logo {
+    font-size: 20px;
+    filter: drop-shadow(0 0 8px rgba(124, 58, 237, 0.5));
+}
+
+.opensync-status {
+    color: #a855f7;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.opensync-room-code {
+    background: rgba(124, 58, 237, 0.2);
+    color: #c4b5fd;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
+}
+
+.opensync-participants {
+    color: #10b981;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.opensync-toggle-chat {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.opensync-toggle-chat:hover {
+    background: rgba(124, 58, 237, 0.3);
+    transform: scale(1.1);
+}
+
+/* Chat Sidebar */
+.opensync-chat-sidebar {
+    position: fixed;
+    top: 0;
+    right: -360px;
+    width: 340px;
+    height: 100vh;
+    background: linear-gradient(180deg, rgba(13, 13, 15, 0.98), rgba(22, 22, 26, 0.98));
+    border-left: 1px solid rgba(124, 58, 237, 0.2);
+    box-shadow: -4px 0 30px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+    display: flex;
+    flex-direction: column;
+    z-index: 2147483646;
+    transition: right 0.3s ease;
+}
+
+.opensync-chat-sidebar.visible {
+    right: 0;
+}
+
+.opensync-chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.opensync-close-chat {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: #a0a0a8;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.opensync-close-chat:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.opensync-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.opensync-chat-messages::-webkit-scrollbar {
+    width: 6px;
+}
+
+.opensync-chat-messages::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.opensync-chat-messages::-webkit-scrollbar-thumb {
+    background: rgba(124, 58, 237, 0.4);
+    border-radius: 3px;
+}
+
+.opensync-chat-message {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    border-bottom-left-radius: 4px;
+    animation: opensync-messageIn 0.2s ease;
+}
+
+.opensync-chat-message.own {
+    background: rgba(124, 58, 237, 0.2);
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 4px;
+    margin-left: 20px;
+}
+
+.opensync-chat-message.system {
+    background: rgba(245, 158, 11, 0.1);
+    border-radius: 8px;
+    text-align: center;
+    font-size: 12px;
+    color: #f59e0b;
+    padding: 8px;
+}
+
+.opensync-chat-message.system .opensync-chat-text {
+    color: #f59e0b;
+}
+
+@keyframes opensync-messageIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.opensync-chat-username {
+    color: #a855f7;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.opensync-chat-text {
+    color: #e4e4e7;
+    font-size: 14px;
+    word-break: break-word;
+}
+
+.opensync-chat-input-container {
+    display: flex;
+    gap: 10px;
+    padding: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.opensync-chat-input {
+    flex: 1;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 24px;
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.opensync-chat-input:focus {
+    border-color: rgba(124, 58, 237, 0.5);
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+}
+
+.opensync-chat-input::placeholder {
+    color: #6b6b73;
+}
+
+.opensync-chat-send {
+    width: 44px;
+    height: 44px;
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    border: none;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.opensync-chat-send:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 15px rgba(124, 58, 237, 0.4);
+}
+
+.opensync-chat-send:active {
+    transform: scale(0.95);
+}
+
+/* Status Bar (New Implementation) */
+.opensync-status-bar {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: linear-gradient(135deg, rgba(13, 13, 15, 0.95), rgba(30, 30, 36, 0.95));
+    border: 1px solid rgba(124, 58, 237, 0.3);
+    border-radius: 50px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 30px rgba(124, 58, 237, 0.15);
+    backdrop-filter: blur(10px);
+    z-index: 2147483647;
+    animation: opensync-slideIn 0.3s ease;
+}
+
+.opensync-status-bar .opensync-logo {
+    font-size: 14px;
+    font-weight: 600;
+    color: #a855f7;
+}
+
+.opensync-status-bar .opensync-room-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.opensync-status-bar .opensync-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Force Sync Button */
+.opensync-force-sync-btn {
+    background: linear-gradient(135deg, #10b981, #059669);
+    border: none;
+    border-radius: 20px;
+    padding: 6px 12px;
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.opensync-force-sync-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+}
+
+.opensync-force-sync-btn:active {
+    transform: scale(0.95);
+}
+
+.opensync-force-sync-btn.syncing {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    animation: opensync-pulse 0.5s infinite;
+}
+
+@keyframes opensync-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+}
+
+/* Chat Toggle Button */
+.opensync-chat-toggle {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.opensync-chat-toggle:hover {
+    background: rgba(124, 58, 237, 0.3);
+    transform: scale(1.1);
+}
+
+/* Chat Panel */
+.opensync-chat-panel {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    width: 300px;
+    max-height: 400px;
+    background: linear-gradient(180deg, rgba(13, 13, 15, 0.98), rgba(22, 22, 26, 0.98));
+    border: 1px solid rgba(124, 58, 237, 0.2);
+    border-radius: 16px;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+    display: flex;
+    flex-direction: column;
+    z-index: 2147483646;
+    animation: opensync-slideIn 0.2s ease;
+}
+
+.opensync-chat-panel.hidden {
+    display: none;
+}
+
+.opensync-chat-panel .opensync-chat-messages {
+    flex: 1;
+    min-height: 200px;
+    max-height: 280px;
+}
+
+.opensync-chat-panel .opensync-chat-input-container {
+    border-radius: 0 0 16px 16px;
+}
+
+/* System message text styling */
+.opensync-chat-message.system .text {
+    color: #f59e0b;
+}
+
+.opensync-chat-message .username {
+    color: #a855f7;
+    font-weight: 600;
+    font-size: 11px;
+}
+
+.opensync-chat-message .text {
+    color: #e4e4e7;
+    font-size: 13px;
+    word-break: break-word;
+}

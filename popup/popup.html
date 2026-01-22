@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenSync</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">🎬</span>
+        <h1>OpenSync</h1>
+      </div>
+      <span class="version">v1.0</span>
+    </header>
+
+    <!-- Status Bar -->
+    <div id="statusBar" class="status-bar status-disconnected">
+      <span class="status-dot"></span>
+      <span id="statusText">Not on PopcornMovies</span>
+    </div>
+
+    <!-- Main Content -->
+    <main class="content">
+      <!-- Not Connected State -->
+      <section id="notConnectedSection" class="section">
+        <p class="info-text">Navigate to any page with a video to start syncing!</p>
+      </section>
+
+      <!-- Create/Join Room Section -->
+      <section id="roomSection" class="section hidden">
+        <!-- Platform Selection -->
+        <div class="platform-selection">
+          <span class="label">Select Platform</span>
+          <div class="platform-cards">
+            <div class="platform-card" data-platform="netflix">
+              <span class="platform-icon">🎬</span>
+              <span class="platform-name">Netflix</span>
+            </div>
+            <div class="platform-card" data-platform="primevideo">
+              <span class="platform-icon">📦</span>
+              <span class="platform-name">Prime</span>
+            </div>
+            <div class="platform-card" data-platform="hotstar">
+              <span class="platform-icon">⭐</span>
+              <span class="platform-name">Hotstar</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="create-room">
+          <button id="createRoomBtn" class="btn btn-primary" disabled>
+            <span class="btn-icon">➕</span>
+            Create Room
+          </button>
+        </div>
+
+        <div class="divider">
+          <span>or</span>
+        </div>
+
+        <div class="join-room">
+          <input type="text" id="roomCodeInput" class="input" placeholder="Enter Room Code" maxlength="6"
+            autocomplete="off">
+          <button id="joinRoomBtn" class="btn btn-secondary">Join</button>
+        </div>
+      </section>
+
+      <!-- Active Room Section -->
+      <section id="activeRoomSection" class="section hidden">
+        <div class="room-info">
+          <div class="room-code-display">
+            <span class="label">Room Code</span>
+            <div class="code-container">
+              <span id="activeRoomCode" class="room-code">------</span>
+              <button id="copyCodeBtn" class="btn-icon-only" title="Copy to clipboard">
+                📋
+              </button>
+            </div>
+          </div>
+
+          <div class="participants">
+            <span class="label">Participants</span>
+            <span id="participantCount" class="participant-count">1</span>
+          </div>
+
+          <div class="platform-badge-container">
+            <span class="label">Platform</span>
+            <span id="activePlatform" class="platform-badge">--</span>
+          </div>
+        </div>
+
+        <div class="room-status">
+          <span id="syncStatus" class="sync-status">
+            <span class="sync-icon">🔄</span>
+            Syncing...
+          </span>
+        </div>
+
+        <button id="leaveRoomBtn" class="btn btn-danger">
+          Leave Room
+        </button>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="settings">
+        <label class="label-small">Server:</label>
+        <input type="text" id="serverUrlInput" class="input input-small" placeholder="ws://localhost:3000">
+      </div>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

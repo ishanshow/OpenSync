@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PopSync Test Page</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 40px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #a855f7;
+        }
+
+        .video-container {
+            margin: 30px auto;
+            max-width: 800px;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .instructions {
+            background: #2a2a4e;
+            padding: 20px;
+            border-radius: 12px;
+            max-width: 600px;
+            margin: 20px auto;
+            text-align: left;
+        }
+
+        .instructions h3 {
+            color: #a855f7;
+            margin-top: 0;
+        }
+
+        .instructions ol {
+            line-height: 1.8;
+        }
+
+        code {
+            background: #3a3a5e;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: Consolas, monospace;
+        }
+
+        .status {
+            margin: 20px auto;
+            padding: 15px;
+            background: #2a2a4e;
+            border-radius: 8px;
+            max-width: 400px;
+        }
+
+        #video-status {
+            color: #10b981;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🎬 PopSync Test Page</h1>
+    <p>Use this page to test if the PopSync extension is working correctly.</p>
+
+    <div class="video-container">
+        <!-- Using a sample video from a public source -->
+        <video id="test-video" controls>
+            <source src="https://www.w3schools.com/html/mov_bbb.mp4" type="video/mp4">
+            <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <div class="status">
+        <strong>Video Status:</strong> <span id="video-status">Checking...</span>
+    </div>
+
+    <div class="instructions">
+        <h3>Testing Instructions:</h3>
+        <ol>
+            <li>Open your browser console (<code>F12</code> → Console tab)</li>
+            <li>You should see <code>[PopSync] Video detected</code> messages</li>
+            <li>Click the PopSync extension icon</li>
+            <li>Click <strong>"Create Room"</strong></li>
+            <li>Open this same page in another browser window</li>
+            <li>Join the room using the code</li>
+            <li>Play/pause the video in one window - it should sync to the other!</li>
+        </ol>
+    </div>
+
+    <script>
+        const video = document.getElementById('test-video');
+        const status = document.getElementById('video-status');
+
+        video.onloadeddata = () => {
+            status.textContent = 'Video loaded! ✓';
+            status.style.color = '#10b981';
+        };
+
+        video.onerror = () => {
+            status.textContent = 'Video failed to load ✗';
+            status.style.color = '#ef4444';
+        };
+
+        // Log video events for debugging
+        ['play', 'pause', 'seeked', 'timeupdate'].forEach(event => {
+            video.addEventListener(event, () => {
+                if (event !== 'timeupdate') {
+                    console.log(`[TestPage] Video event: ${event} at ${video.currentTime.toFixed(2)}s`);
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>

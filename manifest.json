@@ -1,0 +1,60 @@
+{
+  "manifest_version": 2,
+  "name": "OpenSync",
+  "version": "1.0.3",
+  "description": "Watch videos together - Sync playback across devices",
+  "author": "OpenSync Team",
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png"
+  },
+  "permissions": [
+    "tabs",
+    "storage",
+    "activeTab",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": false
+  },
+  "browser_action": {
+    "default_icon": {
+      "48": "icons/icon-48.png"
+    },
+    "default_title": "OpenSync",
+    "default_popup": "popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "include_globs": [
+        "*://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "lib/protocol.js",
+        "content/platformControllers.js",
+        "content/videoController.js",
+        "content/websocketClient.js",
+        "content/overlay.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/overlay.css"
+      ],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    "icons/*",
+    "content/overlay.css",
+    "content/netflixBridge.js"
+  ]
+}
