@@ -99,7 +99,7 @@ const interval = setInterval(() => {
         ws.isAlive = false;
         ws.ping();
     });
-}, 30000);
+}, 60000); // Increased to 60s to prevent random disconnects
 
 wss.on('close', () => {
     clearInterval(interval);
@@ -206,6 +206,13 @@ function handleJoinRoom(ws, clientData, payload) {
     }
 
     // Add client to room
+    // Clear deletion timeout if it exists (room is active again)
+    if (room.deleteTimeout) {
+        clearTimeout(room.deleteTimeout);
+        room.deleteTimeout = null;
+        console.log(`[OpenSync Server] Room ${roomCode} deletion cancelled (user joined)`);
+    }
+
     clientData.roomCode = roomCode;
     clientData.username = username;
     clientData.isHost = false;
@@ -252,10 +259,17 @@ function handleLeaveRoom(clientData) {
 
     console.log(`[OpenSync Server] ${username} left room ${roomCode} (${participantCount} remaining)`);
 
-    // If room is empty, delete it
+    // If room is empty, set a timeout to delete it (grace period for refresh/nav)
     if (participantCount === 0) {
-        rooms.delete(roomCode);
-        console.log(`[OpenSync Server] Room ${roomCode} deleted (empty)`);
+        console.log(`[OpenSync Server] Room ${roomCode} is empty. Scheduling deletion in 2 minutes...`);
+        if (room.deleteTimeout) clearTimeout(room.deleteTimeout);
+
+        room.deleteTimeout = setTimeout(() => {
+            if (rooms.has(roomCode) && rooms.get(roomCode).clients.size === 0) {
+                rooms.delete(roomCode);
+                console.log(`[OpenSync Server] Room ${roomCode} deleted (expired grace period)`);
+            }
+        }, 2 * 60 * 1000); // 2 minutes
     } else {
         // Notify remaining clients
         broadcastToRoom(roomCode, 'USER_LEFT', {

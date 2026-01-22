@@ -31,7 +31,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             // Load saved settings
             const state = await browser.runtime.sendMessage({ type: 'GET_STATE' });
-            serverUrlInput.value = state.serverUrl || 'ws://localhost:3000';
+
+            // Load persistent storage for username
+            const storedData = await browser.storage.local.get(['username', 'serverUrl']);
+
+            serverUrlInput.value = state.serverUrl || storedData.serverUrl || 'ws://localhost:3000';
+
+            // Set username if exists
+            const usernameInput = document.getElementById('usernameInput');
+            if (storedData.username) {
+                usernameInput.value = storedData.username;
+            }
 
             // Check active tab
             const tabInfo = await browser.runtime.sendMessage({ type: 'GET_ACTIVE_TAB' });
@@ -55,6 +65,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function getUsername() {
+        const usernameInput = document.getElementById('usernameInput');
+        let name = usernameInput.value.trim();
+        if (!name) {
+            name = 'User_' + Math.random().toString(36).substring(2, 6);
+        }
+        // Save it
+        browser.storage.local.set({ username: name });
+        return name;
+    }
+
+    // ... UI Update function ...
     function updateUI() {
         // Update status bar
         if (!canUsePopSync) {
@@ -111,14 +133,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         createRoomBtn.disabled = true;
         createRoomBtn.innerHTML = '<span class="btn-icon">⏳</span> Creating...';
 
+        const username = getUsername();
+
         try {
-            console.log('[OpenSync Popup] Creating room with platform:', selectedPlatform, 'sending to tab:', activeTabId);
+            console.log('[OpenSync Popup] Creating room with platform:', selectedPlatform, 'user:', username);
 
             // Send message to content script to create room
             const response = await browser.tabs.sendMessage(activeTabId, {
                 type: 'CREATE_ROOM',
                 serverUrl: serverUrlInput.value,
-                platform: selectedPlatform
+                platform: selectedPlatform,
+                username: username
             });
 
             console.log('[OpenSync Popup] Create room response:', response);
@@ -152,6 +177,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Join Room
     joinRoomBtn.addEventListener('click', async () => {
         const code = roomCodeInput.value.toUpperCase().trim();
+        const username = getUsername();
 
         if (code.length !== 6) {
             showError('Room code must be 6 characters');
@@ -162,12 +188,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         joinRoomBtn.textContent = 'Joining...';
 
         try {
-            console.log('[OpenSync Popup] Joining room:', code);
+            console.log('[OpenSync Popup] Joining room:', code, 'user:', username);
 
             const response = await browser.tabs.sendMessage(activeTabId, {
                 type: 'JOIN_ROOM',
                 roomCode: code,
-                serverUrl: serverUrlInput.value
+                serverUrl: serverUrlInput.value,
+                username: username
             });
 
             console.log('[OpenSync Popup] Join room response:', response);

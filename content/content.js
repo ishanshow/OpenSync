@@ -525,6 +525,12 @@
                 console.log('[OpenSync] Creating room without platform selection');
             }
 
+            // Set username if provided
+            if (message.username) {
+                username = message.username;
+                console.log('[OpenSync] Setting username:', username);
+            }
+
             // Initialize if needed
             if (!isInitialized) {
                 init();
@@ -569,6 +575,12 @@
     async function handleJoinRoom(message, sendResponse) {
         try {
             console.log('[OpenSync] Joining room:', message.roomCode);
+
+            // Set username if provided
+            if (message.username) {
+                username = message.username;
+                console.log('[OpenSync] Setting username:', username);
+            }
 
             // Initialize if needed
             if (!isInitialized) {
@@ -656,6 +668,11 @@
 
     // URL Sync Logic
     function checkUrl() {
+        // Skip URL Sync for platforms where it causes issues
+        if (currentPlatform === 'primevideo' || currentPlatform === 'hotstar') {
+            return;
+        }
+
         if (window.location.href !== lastKnownUrl) {
             // Check if only query params changed (ignore for streaming sites)
             try {
@@ -695,9 +712,14 @@
                         return;
                     }
 
-                    console.log('[OpenSync] Following leader to:', payload.url);
-                    sessionStorage.setItem('opensync_redirect', 'true');
-                    window.location.href = payload.url;
+                    // Prevent infinite loops: Do NOT auto-redirect. Ask user.
+                    console.log('[OpenSync] Remote URL change detected. Prompting user to follow:', payload.url);
+                    if (isMainFrame) {
+                        OpenSyncOverlay.addSystemMessage(
+                            `Host changed URL. <a href="${payload.url}" style="color: #4CAF50; text-decoration: underline;">Click to Follow</a>`
+                        );
+                    }
+                    // window.location.href = payload.url;
                 } else {
                     console.warn('[OpenSync] Blocked redirect to different origin:', payload.url);
                 }
