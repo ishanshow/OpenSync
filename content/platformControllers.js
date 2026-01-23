@@ -72,12 +72,121 @@ const OpenSyncPlatformControllers = (function () {
                 '.rendererContainer video',
                 '.atvwebplayersdk-overlays-container ~ div video',
                 '[data-testid="webPlayer"] video',
+                '.atvwebplayersdk-player-container video',
+                '.webPlayerUIContainer video',
+                'video[src*="primevideo"]',
+                'video[src*="amazon"]',
+                'video[src*="aiv-cdn"]',
                 'video'
             ],
             useShadowDOM: true,
             quirks: {
                 waitForReady: true,
                 checkVisibility: true
+            },
+            // Prime Video Bridge Control
+            controls: {
+                play: () => sendBridgeCommand('PLAY'),
+                pause: () => sendBridgeCommand('PAUSE'),
+                seek: (time) => sendBridgeCommand('SEEK', { time })
+            },
+            init: () => {
+                injectInlineScript(`
+                    // OpenSync Prime Video Player Bridge (Inline)
+                    try {
+                        console.log('[OpenSync Bridge] Initializing Prime Video Player Bridge...');
+                        
+                        function getMainVideoElement() {
+                            // Find the main content video (not ads/previews)
+                            // Priority: video with longest duration and has been playing
+                            const allVideos = document.querySelectorAll('video');
+                            let bestVideo = null;
+                            let bestScore = 0;
+                            
+                            for (const v of allVideos) {
+                                // Calculate a score based on:
+                                // - Has a source
+                                // - Duration (longer = more likely to be main content)
+                                // - Size on screen
+                                // - Is visible
+                                let score = 0;
+                                
+                                if (v.src || v.srcObject) score += 10;
+                                if (v.duration > 60) score += 30;  // Likely main content
+                                if (v.duration > 300) score += 20; // Even more likely (5+ mins)
+                                if (v.currentTime > 0) score += 10; // Has been played
+                                
+                                const rect = v.getBoundingClientRect();
+                                if (rect.width > 400 && rect.height > 200) score += 20; // Large video
+                                if (rect.width > 800) score += 10; // Very large
+                                
+                                // Check if visible
+                                if (rect.top < window.innerHeight && rect.bottom > 0) score += 5;
+                                
+                                if (score > bestScore) {
+                                    bestScore = score;
+                                    bestVideo = v;
+                                }
+                            }
+                            
+                            if (bestVideo) {
+                                console.log('[OpenSync Bridge] Selected video with score', bestScore, 
+                                    'duration:', bestVideo.duration?.toFixed(0), 
+                                    'currentTime:', bestVideo.currentTime?.toFixed(2));
+                            }
+                            
+                            return bestVideo || document.querySelector('video');
+                        }
+                        
+                        window.addEventListener('message', function(event) {
+                            if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
+                            
+                            const { type, payload } = event.data;
+                            const video = getMainVideoElement();
+                            
+                            if (!video) {
+                                console.warn('[OpenSync Bridge] No video element found');
+                                return;
+                            }
+                            
+                            try {
+                                switch (type) {
+                                    case 'SEEK':
+                                        console.log('[OpenSync Bridge] Seeking to', payload.time, '(from', video.currentTime.toFixed(2), ')');
+                                        video.currentTime = payload.time;
+                                        break;
+                                    case 'PLAY':
+                                        console.log('[OpenSync Bridge] Playing at', video.currentTime.toFixed(2));
+                                        video.play().catch(e => console.warn('[OpenSync Bridge] Play failed:', e));
+                                        break;
+                                    case 'PAUSE':
+                                        console.log('[OpenSync Bridge] Pausing at', video.currentTime.toFixed(2));
+                                        video.pause();
+                                        break;
+                                    case 'GET_STATE':
+                                        // Return current state for sync verification
+                                        window.postMessage({
+                                            source: 'OPENSYNC_BRIDGE',
+                                            type: 'STATE',
+                                            payload: {
+                                                currentTime: video.currentTime,
+                                                duration: video.duration,
+                                                paused: video.paused
+                                            }
+                                        }, '*');
+                                        break;
+                                }
+                            } catch (e) { 
+                                console.error('[OpenSync Bridge] Command error:', e); 
+                            }
+                        });
+                        
+                        console.log('[OpenSync Bridge] Prime Video Bridge Ready');
+                        window.postMessage({ source: 'OPENSYNC_BRIDGE', type: 'READY', platform: 'primevideo' }, '*');
+                    } catch(e) { 
+                        console.error('[OpenSync Bridge] Prime Video Init failed:', e); 
+                    }
+                `);
             }
         },
 
@@ -103,6 +212,8 @@ const OpenSyncPlatformControllers = (function () {
                 '.shaka-video-container video',
                 '.bmpui-ui-videocontainer video',
                 '#bitmovinplayer-video-player video',
+                '.bmpui-container video',
+                '.player-container video',
                 'video[src]',
                 'video'
             ],
@@ -110,6 +221,134 @@ const OpenSyncPlatformControllers = (function () {
             quirks: {
                 waitForReady: true,
                 checkVisibility: true
+            },
+            // Hotstar Bridge Control
+            controls: {
+                play: () => sendBridgeCommand('PLAY'),
+                pause: () => sendBridgeCommand('PAUSE'),
+                seek: (time) => sendBridgeCommand('SEEK', { time })
+            },
+            init: () => {
+                injectInlineScript(`
+                    // OpenSync Hotstar Player Bridge (Inline)
+                    try {
+                        console.log('[OpenSync Bridge] Initializing Hotstar Player Bridge...');
+                        
+                        function getMainVideoElement() {
+                            // Find the main content video (not ads/previews)
+                            const allVideos = document.querySelectorAll('video');
+                            let bestVideo = null;
+                            let bestScore = 0;
+                            
+                            for (const v of allVideos) {
+                                let score = 0;
+                                
+                                if (v.src || v.srcObject) score += 10;
+                                if (v.duration > 60) score += 30;
+                                if (v.duration > 300) score += 20;
+                                if (v.currentTime > 0) score += 10;
+                                
+                                const rect = v.getBoundingClientRect();
+                                if (rect.width > 400 && rect.height > 200) score += 20;
+                                if (rect.width > 800) score += 10;
+                                if (rect.top < window.innerHeight && rect.bottom > 0) score += 5;
+                                
+                                if (score > bestScore) {
+                                    bestScore = score;
+                                    bestVideo = v;
+                                }
+                            }
+                            
+                            if (bestVideo) {
+                                console.log('[OpenSync Bridge] Selected video with score', bestScore,
+                                    'duration:', bestVideo.duration?.toFixed(0),
+                                    'currentTime:', bestVideo.currentTime?.toFixed(2));
+                            }
+                            
+                            return bestVideo || document.querySelector('video');
+                        }
+                        
+                        // Try to get Bitmovin player API if available
+                        function getBitmovinPlayer() {
+                            try {
+                                if (window.bitmovin && window.bitmovin.player) {
+                                    const players = window.bitmovin.player.Player.getPlayers();
+                                    if (players && players.length > 0) {
+                                        return players[0];
+                                    }
+                                }
+                            } catch (e) {}
+                            return null;
+                        }
+                        
+                        window.addEventListener('message', function(event) {
+                            if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
+                            
+                            const { type, payload } = event.data;
+                            const video = getMainVideoElement();
+                            const bitmovinPlayer = getBitmovinPlayer();
+                            
+                            if (!video && !bitmovinPlayer) {
+                                console.warn('[OpenSync Bridge] No video/player found');
+                                return;
+                            }
+                            
+                            try {
+                                switch (type) {
+                                    case 'SEEK':
+                                        console.log('[OpenSync Bridge] Seeking to', payload.time, '(from', video?.currentTime?.toFixed(2), ')');
+                                        if (bitmovinPlayer) {
+                                            bitmovinPlayer.seek(payload.time);
+                                        } else if (video) {
+                                            video.currentTime = payload.time;
+                                        }
+                                        break;
+                                    case 'PLAY':
+                                        console.log('[OpenSync Bridge] Playing at', video?.currentTime?.toFixed(2));
+                                        if (bitmovinPlayer) {
+                                            bitmovinPlayer.play();
+                                        } else if (video) {
+                                            video.play().catch(e => console.warn('[OpenSync Bridge] Play failed:', e));
+                                        }
+                                        break;
+                                    case 'PAUSE':
+                                        console.log('[OpenSync Bridge] Pausing at', video?.currentTime?.toFixed(2));
+                                        if (bitmovinPlayer) {
+                                            bitmovinPlayer.pause();
+                                        } else if (video) {
+                                            video.pause();
+                                        }
+                                        break;
+                                    case 'GET_STATE':
+                                        const v = video || (bitmovinPlayer ? { 
+                                            currentTime: bitmovinPlayer.getCurrentTime(), 
+                                            duration: bitmovinPlayer.getDuration(),
+                                            paused: bitmovinPlayer.isPaused()
+                                        } : null);
+                                        if (v) {
+                                            window.postMessage({
+                                                source: 'OPENSYNC_BRIDGE',
+                                                type: 'STATE',
+                                                payload: {
+                                                    currentTime: v.currentTime,
+                                                    duration: v.duration,
+                                                    paused: v.paused
+                                                }
+                                            }, '*');
+                                        }
+                                        break;
+                                }
+                            } catch (e) { 
+                                console.error('[OpenSync Bridge] Command error:', e); 
+                            }
+                        });
+                        
+                        console.log('[OpenSync Bridge] Hotstar Bridge Ready');
+                        window.postMessage({ source: 'OPENSYNC_BRIDGE', type: 'READY', platform: 'hotstar' }, '*');
+                    } catch(e) { 
+                        console.error('[OpenSync Bridge] Hotstar Init failed:', e); 
+                    }
+                `);
             }
         }
     };
@@ -124,10 +363,14 @@ const OpenSyncPlatformControllers = (function () {
 
         console.log(`[OpenSync] Finding video for ${config.name}...`);
 
-        // Try each selector in order
+        let bestVideo = null;
+        let bestScore = 0;
+        let bestSelector = null;
+
+        // Try each selector and score all matching videos
         for (const selector of config.videoSelectors) {
             // First try regular DOM
-            let videos = document.querySelectorAll(selector);
+            let videos = Array.from(document.querySelectorAll(selector));
 
             // Also search in shadow DOMs if enabled
             if (config.useShadowDOM) {
@@ -135,11 +378,18 @@ const OpenSyncPlatformControllers = (function () {
             }
 
             for (const video of videos) {
-                if (isValidVideo(video, config.quirks)) {
-                    console.log(`[OpenSync] Found ${config.name} video with selector: ${selector}`);
-                    return video;
+                const score = scoreVideo(video, config.quirks);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestVideo = video;
+                    bestSelector = selector;
                 }
             }
+        }
+
+        if (bestVideo) {
+            console.log(`[OpenSync] Found ${config.name} video with selector: ${bestSelector}, score: ${bestScore}, duration: ${bestVideo.duration?.toFixed(0)}, currentTime: ${bestVideo.currentTime?.toFixed(2)}`);
+            return bestVideo;
         }
 
         console.log(`[OpenSync] No valid video found for ${config.name}, falling back to generic`);
@@ -174,52 +424,77 @@ const OpenSyncPlatformControllers = (function () {
         return videos;
     }
 
-    // Validate if video element is suitable for sync
-    function isValidVideo(video, quirks = {}) {
-        if (!video) return false;
+    // Calculate a score for how likely this video is the main content
+    function scoreVideo(video, quirks = {}) {
+        if (!video) return -1;
+
+        let score = 0;
 
         // Check if video has a source
-        if (!video.src && !video.querySelector('source') && !video.srcObject) {
-            return false;
+        if (video.src || video.srcObject) {
+            score += 10;
+        } else if (video.querySelector && video.querySelector('source')) {
+            score += 5;
+        } else {
+            return -1; // No source, not valid
         }
 
-        // Check visibility if required
-        if (quirks.checkVisibility) {
+        // Check visibility
+        try {
             const rect = video.getBoundingClientRect();
+            if (rect.width > 400 && rect.height > 200) score += 20;
+            if (rect.width > 800) score += 10;
+            if (rect.top < window.innerHeight && rect.bottom > 0) score += 5;
+            
+            // Penalize very small videos (likely ads/previews)
             if (rect.width < 200 || rect.height < 100) {
-                return false;
+                if (quirks.checkVisibility) return -1;
+                score -= 20;
+            }
+        } catch (e) {}
+
+        // Check duration - main content is usually longer
+        if (video.duration && !isNaN(video.duration)) {
+            if (video.duration > 300) score += 30;  // 5+ minutes
+            else if (video.duration > 60) score += 20;  // 1+ minute
+            else if (video.duration < 30 && quirks.minDuration > video.duration) {
+                return -1; // Too short
             }
         }
 
-        // Check minimum duration if required
-        if (quirks.minDuration && video.duration) {
-            if (video.duration < quirks.minDuration) {
-                return false;
-            }
-        }
-
+        // Video that has been played is likely the one user cares about
+        if (video.currentTime > 0) score += 15;
+        
         // Check if video is ready
-        if (quirks.waitForReady) {
-            // readyState >= 1 means metadata is loaded
-            if (video.readyState < 1) {
-                return false;
-            }
+        if (quirks.waitForReady && video.readyState < 1) {
+            score -= 10;
         }
 
-        return true;
+        return score;
+    }
+
+    // Validate if video element is suitable for sync (wrapper for backwards compat)
+    function isValidVideo(video, quirks = {}) {
+        return scoreVideo(video, quirks) > 0;
     }
 
     // Generic video finder (fallback)
     function findGenericVideo() {
         const videos = document.querySelectorAll('video');
+        let bestVideo = null;
+        let bestScore = 0;
 
         for (const video of videos) {
-            if (video.src || video.querySelector('source') || video.srcObject) {
-                const rect = video.getBoundingClientRect();
-                if (rect.width > 200 && rect.height > 100) {
-                    return video;
-                }
+            const score = scoreVideo(video, { checkVisibility: true });
+            if (score > bestScore) {
+                bestScore = score;
+                bestVideo = video;
             }
+        }
+
+        if (bestVideo) {
+            console.log(`[OpenSync] Found generic video, score: ${bestScore}, duration: ${bestVideo.duration?.toFixed(0)}, currentTime: ${bestVideo.currentTime?.toFixed(2)}`);
+            return bestVideo;
         }
 
         return videos[0] || null;

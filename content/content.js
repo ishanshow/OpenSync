@@ -52,7 +52,103 @@
     const SYNC_INTERVAL = 500; // 500ms minimum between syncs
     const IGNORE_INCOMING_MS = 2000; // Ignore remote updates for 2s after local action
     let lastKnownUrl = window.location.href; // Track URL for navigation sync
+    let lastKnownContentId = null; // Track content ID to prevent infinite loops
     let isNavigation = false;
+
+    // Extract content/video ID from URL based on platform
+    // This is critical to prevent infinite refresh loops
+    function getContentIdFromUrl(url, platform) {
+        try {
+            const urlObj = new URL(url);
+            const hostname = urlObj.hostname.toLowerCase();
+            const pathname = urlObj.pathname;
+
+            // Auto-detect platform if not provided
+            if (!platform) {
+                if (hostname.includes('youtube') || hostname.includes('youtu.be')) {
+                    platform = 'youtube';
+                } else if (hostname.includes('netflix')) {
+                    platform = 'netflix';
+                } else if (hostname.includes('primevideo') || hostname.includes('amazon')) {
+                    platform = 'primevideo';
+                } else if (hostname.includes('hotstar')) {
+                    platform = 'hotstar';
+                }
+            }
+
+            switch (platform) {
+                case 'youtube':
+                    // YouTube: v=VIDEO_ID or /watch?v=VIDEO_ID or youtu.be/VIDEO_ID
+                    const vParam = urlObj.searchParams.get('v');
+                    if (vParam) return `yt:${vParam}`;
+                    // Short URL format
+                    if (hostname.includes('youtu.be')) {
+                        const pathId = pathname.split('/')[1];
+                        if (pathId) return `yt:${pathId}`;
+                    }
+                    return null;
+
+                case 'netflix':
+                    // Netflix: /watch/VIDEO_ID or /title/VIDEO_ID
+                    const netflixMatch = pathname.match(/\/(watch|title)\/(\d+)/);
+                    if (netflixMatch) return `nf:${netflixMatch[2]}`;
+                    return null;
+
+                case 'primevideo':
+                    // Prime Video: /detail/ASIN or /dp/ASIN or /gp/video/detail/ASIN
+                    // ASINs are 10 character alphanumeric
+                    const primeMatch = pathname.match(/\/(detail|dp|gp\/video\/detail)\/([A-Z0-9]{10})/i);
+                    if (primeMatch) return `pv:${primeMatch[2]}`;
+                    // Also check for ref in URL which sometimes contains ASIN
+                    const refMatch = pathname.match(/\/([A-Z0-9]{10})\//i);
+                    if (refMatch) return `pv:${refMatch[1]}`;
+                    return null;
+
+                case 'hotstar':
+                    // Hotstar: Last segment is usually content ID (numeric)
+                    // e.g., /in/movies/movie-name/1234567890 or /in/shows/.../1234567890
+                    const segments = pathname.split('/').filter(s => s);
+                    const lastSegment = segments[segments.length - 1];
+                    // Check if it's a numeric ID (Hotstar content IDs are long numbers)
+                    if (lastSegment && /^\d{8,}$/.test(lastSegment)) {
+                        return `hs:${lastSegment}`;
+                    }
+                    // Sometimes the ID is in a different position for shows
+                    for (let i = segments.length - 1; i >= 0; i--) {
+                        if (/^\d{8,}$/.test(segments[i])) {
+                            return `hs:${segments[i]}`;
+                        }
+                    }
+                    return null;
+
+                default:
+                    // Generic: use full pathname as content ID
+                    return `gen:${pathname}`;
+            }
+        } catch (e) {
+            console.error('[OpenSync] Error extracting content ID:', e);
+            return null;
+        }
+    }
+
+    // Check if two URLs point to the same content
+    function isSameContent(url1, url2, platform) {
+        const id1 = getContentIdFromUrl(url1, platform);
+        const id2 = getContentIdFromUrl(url2, platform);
+        
+        // If we can't extract IDs, compare full URLs
+        if (!id1 || !id2) {
+            try {
+                const u1 = new URL(url1);
+                const u2 = new URL(url2);
+                return u1.pathname === u2.pathname;
+            } catch (e) {
+                return url1 === url2;
+            }
+        }
+        
+        return id1 === id2;
+    }
 
     // Initialize when video is available
     async function init() {
@@ -61,13 +157,14 @@
         console.log(`[OpenSync] Initializing video controller in ${frameInfo}...`);
 
         // Check if we have a video element
+        // Pass the platform so the bridge gets injected
         const hasVideo = OpenSyncVideoController.init({
             onPlay: handleLocalPlay,
             onPause: handleLocalPause,
             onSeek: handleLocalSeek,
             onBuffer: handleLocalBuffer,
             onPlaying: handleLocalPlaying
-        });
+        }, currentPlatform);
 
         if (hasVideo || isMainFrame) {
             if (hasVideo) {
@@ -76,6 +173,10 @@
                 console.log(`[OpenSync] Running in Main Frame (Navigation Controller)`);
             }
 
+            // Initialize content ID tracking
+            lastKnownContentId = getContentIdFromUrl(window.location.href, currentPlatform);
+            console.log('[OpenSync] Initial content ID:', lastKnownContentId);
+
             // Auto-detect navigation (SPA)
             setInterval(checkUrl, 1000);
 
@@ -83,13 +184,17 @@
             try {
                 if (sessionStorage.getItem('opensync_redirect')) {
                     console.log('[OpenSync] Loaded via sync redirect, adhering to room.');
-                    sessionStorage.removeItem('opensync_redirect');
+                    // Clear the redirect flag after a delay to ensure it's processed
+                    // but also cleared for future navigations
+                    setTimeout(() => {
+                        sessionStorage.removeItem('opensync_redirect');
+                    }, 2000);
                     isNavigation = false;
                 } else {
                     const storedUrl = sessionStorage.getItem('opensync_last_url');
-                    // Removed isMainFrame check to allow iframe navigation syncing (security handled by receiver)
-                    if (storedUrl && storedUrl !== window.location.href) {
-                        console.log('[OpenSync] Detected navigation from', storedUrl);
+                    // Check if content actually changed (not just params)
+                    if (storedUrl && !isSameContent(storedUrl, window.location.href, currentPlatform)) {
+                        console.log('[OpenSync] Detected content navigation from', storedUrl);
                         isNavigation = true;
                     }
                 }
@@ -301,6 +406,9 @@
 
         console.log('[OpenSync] Room created:', roomCode);
 
+        // Initialize content tracking
+        lastKnownContentId = getContentIdFromUrl(window.location.href, currentPlatform);
+
         // Persist session to this tab (so we can reconnect after navigation)
         try {
             sessionStorage.setItem('opensync_room', JSON.stringify({
@@ -310,6 +418,11 @@
             }));
         } catch (e) {
             console.warn('[OpenSync] Failed to save session:', e);
+        }
+
+        // Send current URL to server so joining users can be redirected
+        if (isConnected) {
+            OpenSyncWebSocketClient.sendUrlChange(window.location.href);
         }
 
         // Only create overlay in main frame
@@ -329,29 +442,85 @@
 
     // Handle Force Sync button click
     function handleForceSync() {
-        const state = OpenSyncVideoController.getState();
-        if (!state || !isConnected) {
-            console.warn('[OpenSync] Cannot force sync: no video or not connected');
-            return;
+        // Force re-detection of video element before getting state
+        // This ensures we have the correct video for streaming platforms
+        if (currentPlatform) {
+            OpenSyncVideoController.redetect(currentPlatform);
         }
 
-        console.log('[OpenSync] Initiating Force Sync at', state.currentTime.toFixed(2));
+        // Small delay to let redetection complete
+        setTimeout(() => {
+            const state = OpenSyncVideoController.getState();
+            if (!state || !isConnected) {
+                console.warn('[OpenSync] Cannot force sync: no video or not connected');
+                if (isMainFrame) {
+                    OpenSyncOverlay.addSystemMessage('Error: No video found to sync');
+                }
+                return;
+            }
 
-        // Send force sync command to all users
-        OpenSyncWebSocketClient.sendForceSync(state.currentTime);
+            // Sanity check - if duration is available, time should be less than duration
+            if (state.duration && state.currentTime > state.duration) {
+                console.warn('[OpenSync] Invalid time detected, currentTime > duration');
+                if (isMainFrame) {
+                    OpenSyncOverlay.addSystemMessage('Error: Invalid video state');
+                }
+                return;
+            }
 
-        // Show feedback
-        if (isMainFrame) {
-            OpenSyncOverlay.addSystemMessage('Force syncing all users...');
-        }
+            console.log('[OpenSync] Initiating Force Sync at', state.currentTime.toFixed(2), 'duration:', state.duration?.toFixed(0));
+
+            // Send force sync command to all users
+            OpenSyncWebSocketClient.sendForceSync(state.currentTime);
+
+            // Show feedback
+            if (isMainFrame) {
+                OpenSyncOverlay.addSystemMessage(`Force syncing all users to ${state.currentTime.toFixed(1)}s...`);
+            }
+        }, 100);
     }
 
     function handleRoomJoined(payload) {
         roomCode = payload.roomCode;
         isHost = false;
         participantCount = payload.participants || 2;
+        
+        // Set platform from room if available
+        if (payload.platform && !currentPlatform) {
+            currentPlatform = payload.platform;
+            console.log('[OpenSync] Platform set from room:', currentPlatform);
+        }
 
         console.log('[OpenSync] Joined room:', roomCode);
+
+        // Persist session to this tab FIRST (before any redirect)
+        try {
+            sessionStorage.setItem('opensync_room', JSON.stringify({
+                roomCode: payload.roomCode,
+                username: username,
+                serverUrl: serverUrl
+            }));
+        } catch (e) {
+            console.warn('[OpenSync] Failed to save session:', e);
+        }
+
+        // Check if we need to redirect to the video URL
+        // This enables joining from any tab
+        if (payload.currentUrl && !isSameContent(payload.currentUrl, window.location.href, currentPlatform)) {
+            console.log('[OpenSync] Joining from different page, redirecting to video:', payload.currentUrl);
+            
+            // Set redirect flags before navigation
+            sessionStorage.setItem('opensync_redirect', 'true');
+            sessionStorage.setItem('opensync_just_switched_url', 'true');
+            
+            // Update tracking
+            lastKnownUrl = payload.currentUrl;
+            lastKnownContentId = getContentIdFromUrl(payload.currentUrl, currentPlatform);
+            
+            // Redirect to the video URL
+            window.location.href = payload.currentUrl;
+            return; // Stop here - page will reload
+        }
 
         // Only create overlay in main frame
         if (isMainFrame) {
@@ -367,23 +536,14 @@
             OpenSyncOverlay.addSystemMessage('Joined the room!');
         }
 
-        // Persist session to this tab
-        try {
-            sessionStorage.setItem('opensync_room', JSON.stringify({
-                roomCode: payload.roomCode,
-                username: username,
-                serverUrl: serverUrl
-            }));
-        } catch (e) {
-            console.warn('[OpenSync] Failed to save session:', e);
-        }
-
-        // Sync URL: If we navigated, tell room. Else follow room.
+        // Sync URL: If we navigated (changed video), tell room. Else follow room.
         if (isNavigation) {
             console.log('[OpenSync] We navigated, pushing update to room');
             OpenSyncWebSocketClient.sendUrlChange(window.location.href);
             isNavigation = false;
-        } else if (payload.currentUrl) {
+        } else if (payload.currentUrl && !isSameContent(payload.currentUrl, window.location.href, currentPlatform)) {
+            // We're on a different video than the room - this shouldn't happen after the redirect above
+            // but handle it as a fallback
             handleRemoteUrlChange({ url: payload.currentUrl });
         }
 
@@ -742,76 +902,125 @@
 
     // URL Sync Logic
     function checkUrl() {
-        // Skip URL Sync for platforms where it causes issues (except YouTube)
-        if ((currentPlatform === 'primevideo' || currentPlatform === 'hotstar') && currentPlatform !== 'youtube') {
+        // Skip if we just received a redirect (prevent echo)
+        if (sessionStorage.getItem('opensync_redirect')) {
             return;
         }
 
-        if (window.location.href !== lastKnownUrl) {
-            // Check if only query params changed (ignore for streaming sites)
-            try {
-                const currentUrlObj = new URL(window.location.href);
-                const lastUrlObj = new URL(lastKnownUrl);
+        const currentUrl = window.location.href;
+        
+        // URL hasn't changed
+        if (currentUrl === lastKnownUrl) {
+            return;
+        }
 
-                // If path is same but only params/hash changed, ignore sync
-                // This prevents infinite loops on sites like Prime that update params for playback position
-                // YouTube: allow param changes (v=...)
-                if (currentPlatform !== 'youtube') {
-                    if (currentUrlObj.pathname === lastUrlObj.pathname &&
-                        currentUrlObj.origin === lastUrlObj.origin) {
-                        lastKnownUrl = window.location.href; // Update local tracker but don't broadcast
-                        return;
-                    }
-                }
-            } catch (e) { }
+        // Extract content IDs to check if actual content changed
+        const currentContentId = getContentIdFromUrl(currentUrl, currentPlatform);
+        const previousContentId = lastKnownContentId;
 
-            lastKnownUrl = window.location.href;
-            if (isConnected) {
-                console.log('[OpenSync] URL changed locally to', lastKnownUrl);
-                OpenSyncWebSocketClient.sendUrlChange(lastKnownUrl);
-            }
+        // Update tracking
+        lastKnownUrl = currentUrl;
+        lastKnownContentId = currentContentId;
+
+        // Only broadcast if content actually changed (not just params like playback position)
+        if (currentContentId && previousContentId && currentContentId === previousContentId) {
+            console.log('[OpenSync] URL params changed but same content, not broadcasting');
+            return;
+        }
+
+        // Content changed - broadcast to room
+        if (isConnected && currentContentId) {
+            console.log('[OpenSync] Content changed to:', currentContentId, '- broadcasting URL:', currentUrl);
+            OpenSyncWebSocketClient.sendUrlChange(currentUrl);
         }
     }
 
     function handleRemoteUrlChange(payload) {
-        // Allow iframes to handle their own sync (e.g. video player navigation)
-        console.log('[OpenSync] Remote URL change:', payload.url);
+        console.log('[OpenSync] Remote URL change received:', payload.url);
 
-        if (payload.url && payload.url !== window.location.href) {
-            try {
-                const newUrl = new URL(payload.url);
-                // Security: Only allow redirects within the same origin (same website)
-                if (newUrl.origin === window.location.origin) {
-                    // Check if we are already effectively on this page (ignoring params)
-                    const currentUrlObj = new URL(window.location.href);
-                    if (newUrl.pathname === currentUrlObj.pathname && currentPlatform !== 'youtube') {
-                        console.log('[OpenSync] Ignoring remote URL change (same path):', payload.url);
-                        return;
-                    }
+        if (!payload.url) return;
 
-                    // Auto-redirect for YouTube
-                    if (currentPlatform === 'youtube') {
-                        console.log('[OpenSync] YouTube Auto-Redirect to:', payload.url);
-                        sessionStorage.setItem('opensync_redirect', 'true');
-                        sessionStorage.setItem('opensync_just_switched_url', 'true');
-                        window.location.href = payload.url;
-                        return;
-                    }
-
-                    // Prevent infinite loops: Do NOT auto-redirect. Ask user.
-                    console.log('[OpenSync] Remote URL change detected. Prompting user to follow:', payload.url);
-                    if (isMainFrame) {
-                        OpenSyncOverlay.addSystemMessage(
-                            `Host changed URL. <a href="${payload.url}" style="color: #4CAF50; text-decoration: underline;">Click to Follow</a>`
-                        );
-                    }
-                } else {
-                    console.warn('[OpenSync] Blocked redirect to different origin:', payload.url);
-                }
-            } catch (e) {
-                console.error('[OpenSync] Invalid URL update:', e);
-            }
+        // Check if we're already on the same content
+        if (isSameContent(payload.url, window.location.href, currentPlatform)) {
+            console.log('[OpenSync] Already on same content, ignoring URL change');
+            return;
         }
+
+        try {
+            const newUrl = new URL(payload.url);
+            const currentUrl = new URL(window.location.href);
+
+            // Security: Check if same platform/origin for auto-redirect
+            // Allow redirect if: same origin, OR same platform domain
+            const isSameOrigin = newUrl.origin === currentUrl.origin;
+            const isSamePlatform = isSamePlatformDomain(newUrl.hostname, currentUrl.hostname);
+
+            if (isSameOrigin || isSamePlatform) {
+                // Safe to auto-redirect - set flags to prevent echo
+                console.log(`[OpenSync] Auto-redirecting to: ${payload.url}`);
+                
+                // Set redirect flag BEFORE navigating to prevent the new page from broadcasting back
+                sessionStorage.setItem('opensync_redirect', 'true');
+                sessionStorage.setItem('opensync_just_switched_url', 'true');
+                
+                // Update our tracking to match the new URL to prevent double-broadcast
+                lastKnownUrl = payload.url;
+                lastKnownContentId = getContentIdFromUrl(payload.url, currentPlatform);
+                
+                window.location.href = payload.url;
+                return;
+            }
+
+            // Different platform/origin - need to open in new tab or show prompt
+            if (isMainFrame) {
+                const platformName = getPlatformDisplayName(newUrl.hostname);
+                OpenSyncOverlay.addSystemMessage(
+                    `Video changed to ${platformName}. <a href="${payload.url}" target="_blank" style="color: #4CAF50; text-decoration: underline;">Open in New Tab</a>`
+                );
+            }
+        } catch (e) {
+            console.error('[OpenSync] Invalid URL update:', e);
+        }
+    }
+
+    // Check if two hostnames belong to the same platform
+    function isSamePlatformDomain(hostname1, hostname2) {
+        const h1 = hostname1.toLowerCase();
+        const h2 = hostname2.toLowerCase();
+
+        // YouTube domains
+        if ((h1.includes('youtube') || h1.includes('youtu.be')) &&
+            (h2.includes('youtube') || h2.includes('youtu.be'))) {
+            return true;
+        }
+
+        // Netflix domains
+        if (h1.includes('netflix') && h2.includes('netflix')) {
+            return true;
+        }
+
+        // Prime Video / Amazon domains
+        if ((h1.includes('primevideo') || h1.includes('amazon')) &&
+            (h2.includes('primevideo') || h2.includes('amazon'))) {
+            return true;
+        }
+
+        // Hotstar domains
+        if (h1.includes('hotstar') && h2.includes('hotstar')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    // Get display name for platform from hostname
+    function getPlatformDisplayName(hostname) {
+        const h = hostname.toLowerCase();
+        if (h.includes('youtube') || h.includes('youtu.be')) return 'YouTube';
+        if (h.includes('netflix')) return 'Netflix';
+        if (h.includes('primevideo') || h.includes('amazon')) return 'Prime Video';
+        if (h.includes('hotstar')) return 'Hotstar';
+        return hostname;
     }
 
     // Start initialization

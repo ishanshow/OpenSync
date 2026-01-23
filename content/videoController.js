@@ -214,6 +214,15 @@ const OpenSyncVideoController = (function () {
     function setPlatform(platform) {
         currentPlatform = platform;
         console.log(`[OpenSync] Platform set to: ${platform}`);
+        
+        // Initialize platform-specific logic (e.g. inject bridge)
+        if (platform && window.OpenSyncPlatformControllers) {
+            const config = window.OpenSyncPlatformControllers.getController(platform);
+            if (config && config.init) {
+                console.log(`[OpenSync] Initializing ${platform} bridge...`);
+                config.init();
+            }
+        }
     }
 
     // Get current platform
@@ -360,9 +369,50 @@ const OpenSyncVideoController = (function () {
 
     // Get current video state
     function getState() {
+        // First, try to refresh video element reference for platforms that may swap videos
+        if (currentPlatform && (currentPlatform === 'primevideo' || currentPlatform === 'hotstar' || currentPlatform === 'netflix')) {
+            const freshVideo = findVideoElement();
+            if (freshVideo && freshVideo !== videoElement) {
+                console.log('[OpenSync] Video element changed, updating reference');
+                if (videoElement) removeEventListeners();
+                videoElement = freshVideo;
+                attachEventListeners();
+            }
+        }
+
         if (!videoElement) return null;
 
-        return {
+        // Verify the video element is still connected to DOM
+        if (!videoElement.isConnected) {
+            console.warn('[OpenSync] Video element is detached, trying to find new one');
+            const freshVideo = findVideoElement();
+            if (freshVideo) {
+                videoElement = freshVideo;
+                attachEventListeners();
+            } else {
+                return null;
+            }
+        }
+
+        // For Prime Video and Hotstar, double-check we have the main video
+        // by looking for a video with significant duration and currentTime
+        if (currentPlatform === 'primevideo' || currentPlatform === 'hotstar') {
+            const allVideos = document.querySelectorAll('video');
+            for (const v of allVideos) {
+                // Find a video that's actually playing content (not ads/previews)
+                if (v.duration > 60 && v.currentTime > 0 && v.src) {
+                    if (v !== videoElement) {
+                        console.log('[OpenSync] Found better video element (duration:', v.duration, 'currentTime:', v.currentTime, ')');
+                        if (videoElement) removeEventListeners();
+                        videoElement = v;
+                        attachEventListeners();
+                    }
+                    break;
+                }
+            }
+        }
+
+        const state = {
             currentTime: videoElement.currentTime,
             duration: videoElement.duration,
             isPlaying: !videoElement.paused,
@@ -371,6 +421,10 @@ const OpenSyncVideoController = (function () {
             volume: videoElement.volume,
             muted: videoElement.muted
         };
+
+        console.log('[OpenSync] getState:', state.currentTime.toFixed(2), 'playing:', state.isPlaying, 'duration:', state.duration?.toFixed(0));
+        
+        return state;
     }
 
     // Get buffered range
