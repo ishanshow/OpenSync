@@ -251,13 +251,27 @@
                                 } catch (e) { }
                             }
 
-                            // If we just redirected (auto-followed), request sync immediately
+                            // If we just redirected (auto-followed), request sync and auto-play
                             if (sessionStorage.getItem('opensync_just_switched_url')) {
                                 sessionStorage.removeItem('opensync_just_switched_url');
-                                setTimeout(() => {
+                                
+                                console.log('[OpenSync] Detected redirect, will sync and auto-play');
+                                
+                                // Wait for video to be ready, then sync and auto-play
+                                // Use longer delay for streaming sites which load slowly
+                                const delay = (currentPlatform === 'netflix' || currentPlatform === 'primevideo' || currentPlatform === 'hotstar') ? 3000 : 1000;
+                                
+                                setTimeout(async () => {
                                     console.log('[OpenSync] Requesting immediate sync after redirect');
                                     OpenSyncWebSocketClient.requestSync();
-                                }, 1000);
+                                    
+                                    // Start auto-play attempts after sync request
+                                    // Give more time for streaming sites to load
+                                    setTimeout(() => {
+                                        console.log('[OpenSync] Starting auto-play sequence...');
+                                        autoPlayAfterRedirect();
+                                    }, 2000);
+                                }, delay);
                             }
                         } else {
                             // Connection failed - clear stale session data
@@ -898,6 +912,191 @@
                 }
             }, 500);
         }, 200);
+    }
+
+    // Auto-play after redirect for streaming platforms
+    // Uses multiple retries with increasing delays
+    let autoPlayAttempts = 0;
+    const MAX_AUTOPLAY_ATTEMPTS = 10;
+    
+    function autoPlayAfterRedirect() {
+        autoPlayAttempts = 0;
+        attemptAutoPlay();
+    }
+    
+    function attemptAutoPlay() {
+        autoPlayAttempts++;
+        console.log(`[OpenSync] Auto-play attempt ${autoPlayAttempts}/${MAX_AUTOPLAY_ATTEMPTS} for platform:`, currentPlatform);
+        
+        // Check if video is already playing
+        const video = document.querySelector('video');
+        if (video && !video.paused) {
+            console.log('[OpenSync] Video is already playing, auto-play successful!');
+            return;
+        }
+        
+        // Try using the video controller's play function
+        const state = OpenSyncVideoController.getState();
+        if (state && state.isPlaying === false) {
+            console.log('[OpenSync] Video is paused, attempting to play via controller...');
+            OpenSyncVideoController.play();
+        }
+        
+        // Platform-specific auto-play handling
+        let clicked = false;
+        if (currentPlatform === 'netflix') {
+            clicked = tryClickNetflixPlay();
+        } else if (currentPlatform === 'primevideo') {
+            clicked = tryClickPrimeVideoPlay();
+        } else if (currentPlatform === 'hotstar') {
+            clicked = tryClickHotstarPlay();
+        }
+        
+        // If video still not playing and we haven't exceeded max attempts, retry
+        if (autoPlayAttempts < MAX_AUTOPLAY_ATTEMPTS) {
+            setTimeout(() => {
+                const v = document.querySelector('video');
+                if (v && v.paused) {
+                    attemptAutoPlay();
+                } else if (v && !v.paused) {
+                    console.log('[OpenSync] Video started playing!');
+                }
+            }, 1000); // Retry every 1 second
+        } else {
+            console.log('[OpenSync] Max auto-play attempts reached');
+            if (isMainFrame) {
+                OpenSyncOverlay.addSystemMessage('Click play to start synced playback');
+            }
+        }
+    }
+    
+    // Netflix auto-play: click the big play button if present
+    function tryClickNetflixPlay() {
+        console.log('[OpenSync] Netflix: looking for play button...');
+        
+        // Try multiple selectors for Netflix play button (updated for current Netflix UI)
+        const playButtonSelectors = [
+            // Current Netflix selectors
+            '[data-uia="watch-video-player-play-button"]',
+            '[data-uia="player-play-button"]',
+            'button[data-uia*="play"]',
+            '.watch-video--player-view [aria-label*="play" i]',
+            // Older/alternative selectors
+            '[data-uia="player-big-play-button"]',
+            '.PlayerControlsNeo__button--play',
+            '.button-nfplayerPlay',
+            // Generic play button patterns
+            'button[aria-label="Play"]',
+            'button[aria-label="play"]',
+            '.nf-player-container button[aria-label*="play" i]',
+            // SVG play icon button
+            'button svg[data-name="Play"]',
+        ];
+        
+        for (const selector of playButtonSelectors) {
+            try {
+                const playButton = document.querySelector(selector);
+                if (playButton) {
+                    console.log('[OpenSync] Found Netflix play button:', selector);
+                    // Try both click methods
+                    playButton.click();
+                    playButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    return true;
+                }
+            } catch (e) {
+                console.log('[OpenSync] Selector failed:', selector, e);
+            }
+        }
+        
+        // Try to find any button with play in its accessible name
+        const allButtons = document.querySelectorAll('button');
+        for (const btn of allButtons) {
+            const ariaLabel = btn.getAttribute('aria-label') || '';
+            const dataUia = btn.getAttribute('data-uia') || '';
+            if (ariaLabel.toLowerCase().includes('play') || dataUia.toLowerCase().includes('play')) {
+                console.log('[OpenSync] Found play button via attributes:', ariaLabel || dataUia);
+                btn.click();
+                return true;
+            }
+        }
+        
+        // Try video.play() directly as last resort
+        const video = document.querySelector('video');
+        if (video && video.paused) {
+            console.log('[OpenSync] Trying direct video.play()...');
+            video.play().catch(e => console.log('[OpenSync] Direct play failed:', e.message));
+        }
+        
+        return false;
+    }
+    
+    // Prime Video auto-play
+    function tryClickPrimeVideoPlay() {
+        console.log('[OpenSync] Prime Video: looking for play button...');
+        
+        const playButtonSelectors = [
+            // Current Prime Video selectors
+            '.atvwebplayersdk-playpause-button[aria-label*="Play" i]',
+            '[data-testid="play-button"]',
+            '.atvwebplayersdk-playpause-button',
+            '.fqye4e3[aria-label*="play" i]',
+            // Player controls
+            '.dv-player-fullscreen button[aria-label*="play" i]',
+            'button[aria-label*="Play" i]',
+            // Fallback
+            '.webPlayerContainer button[aria-label*="play" i]'
+        ];
+        
+        for (const selector of playButtonSelectors) {
+            try {
+                const playButton = document.querySelector(selector);
+                if (playButton) {
+                    console.log('[OpenSync] Found Prime Video play button:', selector);
+                    playButton.click();
+                    return true;
+                }
+            } catch (e) {}
+        }
+        
+        // Direct play attempt
+        const video = document.querySelector('video');
+        if (video && video.paused) {
+            video.play().catch(e => console.log('[OpenSync] Direct play failed:', e.message));
+        }
+        
+        return false;
+    }
+    
+    // Hotstar auto-play
+    function tryClickHotstarPlay() {
+        console.log('[OpenSync] Hotstar: looking for play button...');
+        
+        const playButtonSelectors = [
+            '.bmpui-ui-playbacktogglebutton',
+            '[data-testid="play-button"]',
+            '.icon-player-play',
+            'button[aria-label*="Play" i]',
+            '.bmpui-ui-hugeplaybacktogglebutton'
+        ];
+        
+        for (const selector of playButtonSelectors) {
+            try {
+                const playButton = document.querySelector(selector);
+                if (playButton) {
+                    console.log('[OpenSync] Found Hotstar play button:', selector);
+                    playButton.click();
+                    return true;
+                }
+            } catch (e) {}
+        }
+        
+        // Direct play attempt
+        const video = document.querySelector('video');
+        if (video && video.paused) {
+            video.play().catch(e => console.log('[OpenSync] Direct play failed:', e.message));
+        }
+        
+        return false;
     }
 
     // URL Sync Logic

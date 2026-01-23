@@ -42,17 +42,52 @@ const OpenSyncPlatformControllers = (function () {
                             } catch (e) { return null; }
                         }
                         
+                        function clickPlayButton() {
+                            // Try to click the play button if API fails
+                            const selectors = [
+                                '[data-uia="player-big-play-button"]',
+                                '.PlayerControlsNeo__button--play',
+                                'button[aria-label="Play"]'
+                            ];
+                            for (const sel of selectors) {
+                                const btn = document.querySelector(sel);
+                                if (btn) {
+                                    console.log('[OpenSync Bridge] Clicking play button:', sel);
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        }
+                        
                         window.addEventListener('message', function(event) {
                             if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
                             const player = getNetflixPlayer();
-                            if (!player) return;
                             
                             const { type, payload } = event.data;
                             try {
                                 switch (type) {
-                                    case 'SEEK': player.seek(payload.time * 1000); break;
-                                    case 'PLAY': player.play(); break;
-                                    case 'PAUSE': player.pause(); break;
+                                    case 'SEEK': 
+                                        if (player) player.seek(payload.time * 1000);
+                                        break;
+                                    case 'PLAY': 
+                                        if (player) {
+                                            player.play();
+                                        } else {
+                                            // Fallback: click the play button
+                                            clickPlayButton();
+                                        }
+                                        // Also try clicking in case API doesn't work due to autoplay policy
+                                        setTimeout(() => {
+                                            const video = document.querySelector('video');
+                                            if (video && video.paused) {
+                                                clickPlayButton();
+                                            }
+                                        }, 500);
+                                        break;
+                                    case 'PAUSE': 
+                                        if (player) player.pause();
+                                        break;
                                 }
                             } catch (e) { console.error('[OpenSync Bridge] Error:', e); }
                         });
