@@ -5,6 +5,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenSync</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="popup.css">
 </head>
 
@@ -13,118 +16,165 @@
     <!-- Header -->
     <header class="header">
       <div class="logo">
-        <span class="logo-icon">🎬</span>
-        <h1>OpenSync</h1>
+        <svg class="logo-icon" width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <rect x="2" y="6" width="24" height="16" rx="3" stroke="currentColor" stroke-width="2"/>
+          <circle cx="14" cy="14" r="4" fill="currentColor"/>
+          <path d="M6 22L10 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M22 22L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="logo-text">OpenSync</span>
       </div>
-      <span class="version">v1.0</span>
+      <span class="version-badge">v1.0</span>
     </header>
 
-    <!-- Status Bar -->
+    <!-- Status Indicator -->
     <div id="statusBar" class="status-bar status-disconnected">
-      <span class="status-dot"></span>
-      <span id="statusText">Not on PopcornMovies</span>
+      <div class="status-indicator">
+        <span class="status-dot"></span>
+        <span id="statusText">Not on video page</span>
+      </div>
     </div>
 
     <!-- Main Content -->
     <main class="content">
       <!-- Not Connected State -->
       <section id="notConnectedSection" class="section">
-        <p class="info-text">Navigate to any page with a video to start syncing!</p>
+        <div class="empty-state">
+          <svg class="empty-icon" width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <rect x="4" y="10" width="40" height="28" rx="4" stroke="currentColor" stroke-width="2" stroke-dasharray="4 4"/>
+            <circle cx="24" cy="24" r="6" stroke="currentColor" stroke-width="2"/>
+            <path d="M22 24L26 24" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <p class="empty-text">Navigate to a video page to start syncing</p>
+        </div>
       </section>
 
       <!-- Create/Join Room Section -->
       <section id="roomSection" class="section hidden">
         <!-- Platform Selection -->
-        <div class="platform-selection">
-          <span class="label">Select Platform</span>
-          <div class="platform-cards">
-            <div class="platform-card" data-platform="youtube">
-              <span class="platform-icon">▶️</span>
-              <span class="platform-name">YouTube</span>
-            </div>
-            <div class="platform-card" data-platform="netflix">
-              <span class="platform-icon">🎬</span>
-              <span class="platform-name">Netflix</span>
-            </div>
-            <div class="platform-card" data-platform="primevideo">
-              <span class="platform-icon">📦</span>
-              <span class="platform-name">Prime</span>
-            </div>
-            <div class="platform-card" data-platform="hotstar">
-              <span class="platform-icon">⭐</span>
-              <span class="platform-name">Hotstar</span>
-            </div>
+        <div class="form-group">
+          <label class="form-label">Platform</label>
+          <div class="platform-grid">
+            <button class="platform-btn" data-platform="youtube">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <rect x="2" y="4" width="16" height="12" rx="3" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M8 8L13 10L8 12V8Z" fill="currentColor"/>
+              </svg>
+              <span>YouTube</span>
+            </button>
+            <button class="platform-btn" data-platform="netflix">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M5 3V17L10 10L15 17V3" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+              <span>Netflix</span>
+            </button>
+            <button class="platform-btn" data-platform="primevideo">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M3 10C3 6.13 6.13 3 10 3C13.87 3 17 6.13 17 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M6 13C7.2 14.2 8.5 15 10 15C11.5 15 12.8 14.2 14 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <circle cx="10" cy="10" r="2" fill="currentColor"/>
+              </svg>
+              <span>Prime</span>
+            </button>
+            <button class="platform-btn" data-platform="hotstar">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M10 2L11.5 7H17L12.5 10.5L14 16L10 12.5L6 16L7.5 10.5L3 7H8.5L10 2Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+              <span>Hotstar</span>
+            </button>
           </div>
         </div>
 
         <!-- Username Input -->
-        <div class="username-input-container" style="margin-bottom: 15px;">
-          <span class="label">Display Name</span>
+        <div class="form-group">
+          <label class="form-label">Display Name</label>
           <input type="text" id="usernameInput" class="input" placeholder="Enter your name" maxlength="15">
         </div>
 
-        <div class="platform-selection">
+        <!-- Create Room Button -->
+        <button id="createRoomBtn" class="btn btn-primary" disabled>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M9 6V12M6 9H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span>Create Room</span>
+        </button>
 
-          <div class="create-room">
-            <button id="createRoomBtn" class="btn btn-primary" disabled>
-              <span class="btn-icon">➕</span>
-              Create Room
-            </button>
-          </div>
+        <!-- Divider -->
+        <div class="divider">
+          <span>or join existing</span>
+        </div>
 
-          <div class="divider">
-            <span>or</span>
-          </div>
-
-          <div class="join-room">
-            <input type="text" id="roomCodeInput" class="input" placeholder="Enter Room Code" maxlength="6"
-              autocomplete="off">
-            <button id="joinRoomBtn" class="btn btn-secondary">Join</button>
-          </div>
+        <!-- Join Room -->
+        <div class="join-row">
+          <input type="text" id="roomCodeInput" class="input input-code" placeholder="ROOM CODE" maxlength="6" autocomplete="off">
+          <button id="joinRoomBtn" class="btn btn-secondary">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M11 4L16 9L11 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M16 9H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M6 4H4C2.89543 4 2 4.89543 2 6V12C2 13.1046 2.89543 14 4 14H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
       </section>
 
       <!-- Active Room Section -->
       <section id="activeRoomSection" class="section hidden">
-        <div class="room-info">
-          <div class="room-code-display">
-            <span class="label">Room Code</span>
-            <div class="code-container">
-              <span id="activeRoomCode" class="room-code">------</span>
-              <button id="copyCodeBtn" class="btn-icon-only" title="Copy to clipboard">
-                📋
-              </button>
+        <div class="room-card">
+          <div class="room-header">
+            <div class="room-code-block">
+              <span class="label">Room Code</span>
+              <div class="code-row">
+                <span id="activeRoomCode" class="room-code">------</span>
+                <button id="copyCodeBtn" class="btn-icon" title="Copy to clipboard">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <rect x="5" y="5" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M11 5V3C11 1.89543 10.1046 1 9 1H3C1.89543 1 1 1.89543 1 3V9C1 10.1046 1.89543 11 3 11H5" stroke="currentColor" stroke-width="1.5"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="room-stats">
+              <div class="stat-item">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/>
+                  <path d="M2 14C2 11.2386 4.23858 9 7 9H9C11.7614 9 14 11.2386 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                <span id="participantCount">1</span>
+              </div>
+              <div class="stat-item">
+                <span id="activePlatform" class="platform-tag">--</span>
+              </div>
             </div>
           </div>
 
-          <div class="participants">
-            <span class="label">Participants</span>
-            <span id="participantCount" class="participant-count">1</span>
-          </div>
-
-          <div class="platform-badge-container">
-            <span class="label">Platform</span>
-            <span id="activePlatform" class="platform-badge">--</span>
+          <div class="sync-indicator">
+            <div class="sync-pulse"></div>
+            <span id="syncStatus">Synced</span>
           </div>
         </div>
 
-        <div class="room-status">
-          <span id="syncStatus" class="sync-status">
-            <span class="sync-icon">🔄</span>
-            Syncing...
-          </span>
-        </div>
-
-        <button id="leaveRoomBtn" class="btn btn-danger">
-          Leave Room
+        <button id="leaveRoomBtn" class="btn btn-ghost btn-danger">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M6 3H4C2.89543 3 2 3.89543 2 5V13C2 14.1046 2.89543 15 4 15H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M12 6L16 9L12 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M7 9H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span>Leave Room</span>
         </button>
       </section>
     </main>
 
     <!-- Footer -->
     <footer class="footer">
-      <div class="settings">
-        <label class="label-small">Server:</label>
-        <input type="text" id="serverUrlInput" class="input input-small" placeholder="ws://localhost:3000">
+      <div class="server-config">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect x="1" y="2" width="12" height="4" rx="1" stroke="currentColor" stroke-width="1.2"/>
+          <rect x="1" y="8" width="12" height="4" rx="1" stroke="currentColor" stroke-width="1.2"/>
+          <circle cx="3.5" cy="4" r="0.75" fill="currentColor"/>
+          <circle cx="3.5" cy="10" r="0.75" fill="currentColor"/>
+        </svg>
+        <input type="text" id="serverUrlInput" class="input input-sm" placeholder="ws://localhost:3000">
       </div>
     </footer>
   </div>

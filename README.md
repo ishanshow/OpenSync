@@ -26,7 +26,7 @@ The server will run on `ws://localhost:3000`
 1. Open Firefox and go to `about:debugging`
 2. Click **"This Firefox"** in the sidebar
 3. Click **"Load Temporary Add-on..."**
-4. Navigate to the `AnySync` folder and select `manifest.json`
+4. Navigate to the `OpenSync` folder and select `manifest.json`
 
 ### 3. Use OpenSync
 

@@ -116,6 +116,36 @@
                             console.log('[OpenSync] Rejoining room:', data.roomCode);
                             OpenSyncWebSocketClient.joinRoom(data.roomCode, username);
 
+                            // Wait for room join confirmation before updating background state
+                            let waitedForJoin = 0;
+                            while (!roomCode && waitedForJoin < 3000) {
+                                await new Promise(resolve => setTimeout(resolve, 100));
+                                waitedForJoin += 100;
+                            }
+
+                            // Update background storage with rejoined room state
+                            if (roomCode) {
+                                try {
+                                    browser.runtime.sendMessage({
+                                        type: 'SET_ROOM',
+                                        room: {
+                                            code: roomCode,
+                                            participants: participantCount,
+                                            isHost: isHost,
+                                            platform: currentPlatform
+                                        }
+                                    }).catch(() => { });
+                                    console.log('[OpenSync] Background storage updated after rejoin');
+                                } catch (e) { }
+                            } else {
+                                // Failed to rejoin - clear stale session data
+                                console.log('[OpenSync] Failed to rejoin room, clearing session');
+                                sessionStorage.removeItem('opensync_room');
+                                try {
+                                    browser.runtime.sendMessage({ type: 'LEAVE_ROOM' }).catch(() => { });
+                                } catch (e) { }
+                            }
+
                             // If we just redirected (auto-followed), request sync immediately
                             if (sessionStorage.getItem('opensync_just_switched_url')) {
                                 sessionStorage.removeItem('opensync_just_switched_url');
@@ -124,6 +154,13 @@
                                     OpenSyncWebSocketClient.requestSync();
                                 }, 1000);
                             }
+                        } else {
+                            // Connection failed - clear stale session data
+                            console.log('[OpenSync] Failed to reconnect to server, clearing session');
+                            sessionStorage.removeItem('opensync_room');
+                            try {
+                                browser.runtime.sendMessage({ type: 'LEAVE_ROOM' }).catch(() => { });
+                            } catch (e) { }
                         }
                     }
                 } catch (e) {
@@ -221,6 +258,15 @@
                     isConnected = false;
                     if (isMainFrame) {
                         OpenSyncOverlay.updateStatus('Disconnected');
+                        
+                        // Clear background storage if we're not navigating (unexpected disconnect)
+                        // Navigation will handle its own reconnection logic
+                        if (!sessionStorage.getItem('opensync_redirect')) {
+                            // Notify popup that we disconnected
+                            try {
+                                browser.runtime.sendMessage({ type: 'ROOM_DISCONNECTED' }).catch(() => { });
+                            } catch (e) { }
+                        }
                     }
                 },
                 onError: (error) => {
@@ -254,6 +300,17 @@
         participantCount = 1;
 
         console.log('[OpenSync] Room created:', roomCode);
+
+        // Persist session to this tab (so we can reconnect after navigation)
+        try {
+            sessionStorage.setItem('opensync_room', JSON.stringify({
+                roomCode: payload.roomCode,
+                username: username,
+                serverUrl: serverUrl
+            }));
+        } catch (e) {
+            console.warn('[OpenSync] Failed to save session:', e);
+        }
 
         // Only create overlay in main frame
         if (isMainFrame) {
@@ -638,6 +695,13 @@
         isHost = false;
         roomCode = null;
         participantCount = 1;
+
+        // Clear session storage to prevent auto-reconnect
+        try {
+            sessionStorage.removeItem('opensync_room');
+            sessionStorage.removeItem('opensync_redirect');
+            sessionStorage.removeItem('opensync_just_switched_url');
+        } catch (e) { }
 
         sendResponse({ success: true });
     }

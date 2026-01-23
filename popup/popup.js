@@ -15,11 +15,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const participantCount = document.getElementById('participantCount');
     const leaveRoomBtn = document.getElementById('leaveRoomBtn');
     const serverUrlInput = document.getElementById('serverUrlInput');
-    const platformCards = document.querySelectorAll('.platform-card');
+    const platformBtns = document.querySelectorAll('.platform-btn');
     const activePlatform = document.getElementById('activePlatform');
 
     // State
-    let canUsePopSync = false;
+    let canUseOpenSync = false;
     let currentRoom = null;
     let activeTabId = null;
     let selectedPlatform = null;
@@ -47,9 +47,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const tabInfo = await browser.runtime.sendMessage({ type: 'GET_ACTIVE_TAB' });
             activeTabId = tabInfo.tabId;
 
-            // Allow PopSync on any http/https page (not just popcornmovies)
+            // Allow OpenSync on any http/https page
             const isValidPage = tabInfo.url && (tabInfo.url.startsWith('http://') || tabInfo.url.startsWith('https://') || tabInfo.url.startsWith('file://'));
-            canUsePopSync = isValidPage;
+            canUseOpenSync = isValidPage;
 
             // Auto-detect platform
             if (isValidPage) {
@@ -68,12 +68,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 // If platform detected, auto-select UI
                 if (selectedPlatform) {
-                    const card = document.querySelector(`.platform-card[data-platform="${selectedPlatform}"]`);
-                    if (card) {
+                    const btn = document.querySelector(`.platform-btn[data-platform="${selectedPlatform}"]`);
+                    if (btn) {
                         // Wait for DOM
                         setTimeout(() => {
-                            platformCards.forEach(c => c.classList.remove('selected'));
-                            card.classList.add('selected');
+                            platformBtns.forEach(b => b.classList.remove('selected'));
+                            btn.classList.add('selected');
                             createRoomBtn.disabled = false;
                         }, 100);
                     }
@@ -85,11 +85,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 currentRoom = state.currentRoom;
             }
 
-            console.log('[OpenSync Popup] Init:', { canUsePopSync, activeTabId, currentRoom, selectedPlatform });
+            console.log('[OpenSync Popup] Init:', { canUseOpenSync, activeTabId, currentRoom, selectedPlatform });
             updateUI();
         } catch (error) {
             console.error('[OpenSync Popup] Init error:', error);
-            canUsePopSync = false;
+            canUseOpenSync = false;
             updateUI();
         }
     }
@@ -108,7 +108,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ... UI Update function ...
     function updateUI() {
         // Update status bar
-        if (!canUsePopSync) {
+        if (!canUseOpenSync) {
             statusBar.className = 'status-bar status-disconnected';
             statusText.textContent = 'Open a video page';
             showSection('notConnected');
@@ -145,13 +145,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Platform Selection
-    platformCards.forEach(card => {
-        card.addEventListener('click', () => {
+    platformBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
             // Remove selected from all
-            platformCards.forEach(c => c.classList.remove('selected'));
+            platformBtns.forEach(b => b.classList.remove('selected'));
             // Add selected to clicked
-            card.classList.add('selected');
-            selectedPlatform = card.dataset.platform;
+            btn.classList.add('selected');
+            selectedPlatform = btn.dataset.platform;
             // Enable create button
             createRoomBtn.disabled = false;
         });
@@ -160,7 +160,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Create Room
     createRoomBtn.addEventListener('click', async () => {
         createRoomBtn.disabled = true;
-        createRoomBtn.innerHTML = '<span class="btn-icon">⏳</span> Creating...';
+        createRoomBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" class="spin">
+            <circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="11"/>
+        </svg><span>Creating...</span>`;
 
         const username = getUsername();
 
@@ -200,7 +202,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         createRoomBtn.disabled = false;
-        createRoomBtn.innerHTML = '<span class="btn-icon">➕</span> Create Room';
+        createRoomBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M9 6V12M6 9H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg><span>Create Room</span>`;
     });
 
     // Join Room
@@ -294,31 +299,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     function showError(message) {
-        const tooltip = document.createElement('div');
-        tooltip.className = 'copied-tooltip';
-        tooltip.style.background = 'var(--danger)';
-        tooltip.textContent = message;
-        document.body.appendChild(tooltip);
-        setTimeout(() => tooltip.remove(), 3000);
+        const toast = document.createElement('div');
+        toast.className = 'toast error';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
     }
 
     function showTooltip(message) {
-        const tooltip = document.createElement('div');
-        tooltip.className = 'copied-tooltip';
-        tooltip.textContent = message;
-        document.body.appendChild(tooltip);
-        setTimeout(() => tooltip.remove(), 1500);
+        const toast = document.createElement('div');
+        toast.className = 'toast success';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 1500);
     }
 
     // Listen for updates from content script
-    browser.runtime.onMessage.addListener((message) => {
+    browser.runtime.onMessage.addListener(async (message) => {
         if (message.type === 'PARTICIPANT_UPDATE') {
             if (currentRoom) {
                 currentRoom.participants = message.count;
                 participantCount.textContent = message.count;
+                // Also update background storage with new participant count
+                await browser.runtime.sendMessage({
+                    type: 'SET_ROOM',
+                    room: currentRoom
+                });
             }
         } else if (message.type === 'ROOM_DISCONNECTED') {
+            // Clear both local state and background storage
             currentRoom = null;
+            await browser.runtime.sendMessage({ type: 'LEAVE_ROOM' });
             updateUI();
         }
     });
