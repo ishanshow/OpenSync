@@ -185,17 +185,104 @@ const OpenSyncVideoController = (function () {
     function notifyVideoFound() {
         console.log(`[OpenSync] Video ready in ${frameInfo}!`);
 
-        // If we're in an iframe, notify the parent
+        // If we're in an iframe, notify the parent using cross-frame protocol
+        if (!isMainFrame && window.parent) {
+            try {
+                const state = getState();
+                window.parent.postMessage({
+                    source: 'OPENSYNC_IFRAME',
+                    type: 'VIDEO_FOUND',
+                    frameId: window.location.href,
+                    state: state
+                }, '*');
+                console.log('[OpenSync] Sent VIDEO_FOUND to parent frame');
+            } catch (e) {
+                console.warn('[OpenSync] Could not notify parent frame:', e);
+            }
+        }
+    }
+
+    // Send video event to parent frame (for cross-frame sync)
+    function notifyParentOfEvent(eventType, state) {
         if (!isMainFrame && window.parent) {
             try {
                 window.parent.postMessage({
-                    type: 'OPENSYNC_VIDEO_FOUND',
-                    frameId: window.location.href
+                    source: 'OPENSYNC_IFRAME',
+                    type: 'VIDEO_EVENT',
+                    event: eventType,
+                    state: state
                 }, '*');
+                console.log(`[OpenSync] Sent ${eventType} event to parent frame`);
             } catch (e) {
                 // Cross-origin, that's fine
             }
         }
+    }
+
+    // Listen for control commands from parent frame (Global Mode)
+    function setupParentMessageListener() {
+        if (isMainFrame) return; // Only iframes listen for parent commands
+
+        window.addEventListener('message', (event) => {
+            // Only accept messages from parent
+            if (event.source !== window.parent) return;
+            if (event.data?.source !== 'OPENSYNC_MAIN') return;
+
+            const { type, currentTime, isPlaying } = event.data;
+            console.log(`[OpenSync] Received command from parent: ${type}`, currentTime);
+
+            switch (type) {
+                case 'PLAY':
+                    if (currentTime !== undefined) {
+                        const state = getState();
+                        if (state && Math.abs(state.currentTime - currentTime) > 0.5) {
+                            seek(currentTime);
+                        }
+                    }
+                    play();
+                    break;
+                case 'PAUSE':
+                    if (currentTime !== undefined) {
+                        const state = getState();
+                        if (state && Math.abs(state.currentTime - currentTime) > 0.5) {
+                            seek(currentTime);
+                        }
+                    }
+                    pause();
+                    break;
+                case 'SEEK':
+                    seek(currentTime);
+                    // Preserve play state after seek
+                    if (isPlaying === true) {
+                        setTimeout(() => play(), 300);
+                    } else if (isPlaying === false) {
+                        pause();
+                    }
+                    break;
+                case 'GET_STATE':
+                    const state = getState();
+                    if (state) {
+                        window.parent.postMessage({
+                            source: 'OPENSYNC_IFRAME',
+                            type: 'STATE_RESPONSE',
+                            state: state
+                        }, '*');
+                    }
+                    break;
+                case 'SYNC':
+                    if (event.data.state) {
+                        syncToState(event.data.state);
+                    }
+                    break;
+            }
+        });
+
+        console.log('[OpenSync] Parent message listener set up in iframe');
+    }
+
+    // Initialize parent listener for iframes
+    if (!isMainFrame) {
+        setupParentMessageListener();
     }
 
     // Re-detect video (useful when navigating)
@@ -269,8 +356,15 @@ const OpenSyncVideoController = (function () {
         }
 
         console.log(`[OpenSync] Local PLAY at ${videoElement.currentTime.toFixed(2)}s in ${frameInfo}`);
+        const state = getState();
+        
+        // Notify parent frame (for Global Mode cross-frame sync)
+        if (!isMainFrame) {
+            notifyParentOfEvent('play', state);
+        }
+        
         if (eventCallbacks.onPlay) {
-            eventCallbacks.onPlay(getState());
+            eventCallbacks.onPlay(state);
         }
     }
 
@@ -286,8 +380,15 @@ const OpenSyncVideoController = (function () {
         }
 
         console.log(`[OpenSync] Local PAUSE at ${videoElement.currentTime.toFixed(2)}s in ${frameInfo}`);
+        const state = getState();
+        
+        // Notify parent frame (for Global Mode cross-frame sync)
+        if (!isMainFrame) {
+            notifyParentOfEvent('pause', state);
+        }
+        
         if (eventCallbacks.onPause) {
-            eventCallbacks.onPause(getState());
+            eventCallbacks.onPause(state);
         }
     }
 
@@ -308,11 +409,18 @@ const OpenSyncVideoController = (function () {
             if (Math.abs(cursorTime - lastSeekTime) > 0.5) {
                 lastSeekTime = cursorTime;
                 console.log(`[OpenSync] Local SEEK to ${cursorTime.toFixed(2)}s in ${frameInfo} (isPlaying: ${wasPlaying})`);
-                if (eventCallbacks.onSeek) {
-                    // Manually construct state with captured isPlaying
-                    const state = getState();
-                    if (state) {
-                        state.isPlaying = wasPlaying; // Override with captured truth
+                
+                // Manually construct state with captured isPlaying
+                const state = getState();
+                if (state) {
+                    state.isPlaying = wasPlaying; // Override with captured truth
+                    
+                    // Notify parent frame (for Global Mode cross-frame sync)
+                    if (!isMainFrame) {
+                        notifyParentOfEvent('seek', state);
+                    }
+                    
+                    if (eventCallbacks.onSeek) {
                         eventCallbacks.onSeek(state);
                     }
                 }

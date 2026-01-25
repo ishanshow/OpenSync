@@ -145,6 +145,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Platform Selection
+    const globalModeHint = document.getElementById('globalModeHint');
+    
     platformBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             // Remove selected from all
@@ -154,6 +156,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             selectedPlatform = btn.dataset.platform;
             // Enable create button
             createRoomBtn.disabled = false;
+            
+            // Show/hide Global Mode hint
+            if (selectedPlatform === 'global') {
+                if (globalModeHint) globalModeHint.style.display = 'block';
+            } else {
+                if (globalModeHint) globalModeHint.style.display = 'none';
+            }
         });
     });
 
@@ -165,15 +174,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         </svg><span>Creating...</span>`;
 
         const username = getUsername();
+        const isGlobalMode = selectedPlatform === 'global';
 
         try {
-            console.log('[OpenSync Popup] Creating room with platform:', selectedPlatform, 'user:', username);
+            console.log('[OpenSync Popup] Creating room with platform:', selectedPlatform, 'globalMode:', isGlobalMode, 'user:', username);
 
             // Send message to content script to create room
             const response = await browser.tabs.sendMessage(activeTabId, {
                 type: 'CREATE_ROOM',
                 serverUrl: serverUrlInput.value,
-                platform: selectedPlatform,
+                platform: isGlobalMode ? null : selectedPlatform,
+                globalMode: isGlobalMode,
                 username: username
             });
 
@@ -184,7 +195,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     code: response.roomCode,
                     participants: 1,
                     isHost: true,
-                    platform: selectedPlatform
+                    platform: isGlobalMode ? 'Global' : selectedPlatform
                 };
 
                 await browser.runtime.sendMessage({

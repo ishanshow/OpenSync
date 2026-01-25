@@ -312,6 +312,34 @@ body {
   color: var(--accent);
 }
 
+/* Global Mode Button - spans full width on 5th column */
+.platform-btn-global {
+  grid-column: span 4;
+  flex-direction: row;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, var(--bg-surface), rgba(20, 184, 166, 0.05));
+  border-style: dashed;
+}
+
+.platform-btn-global span {
+  font-size: 11px;
+}
+
+.platform-btn-global.selected {
+  background: linear-gradient(135deg, var(--accent-subtle), rgba(20, 184, 166, 0.15));
+  border-style: solid;
+}
+
+/* Form hint text */
+.form-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 4px;
+}
+
 /* ==================== BUTTONS ==================== */
 .btn {
   display: inline-flex;
