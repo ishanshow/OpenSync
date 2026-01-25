@@ -55,6 +55,137 @@
     let lastKnownContentId = null; // Track content ID to prevent infinite loops
     let isNavigation = false;
 
+    // Global Mode: Cross-frame video sync
+    let isGlobalMode = false; // Whether Global Mode is active
+    let iframeVideoSource = null; // Reference to iframe window containing video
+    let iframeVideoFrameId = null; // URL/ID of iframe with video
+    let hasLocalVideo = false; // Whether main frame has a video
+
+    // ============================================
+    // GLOBAL MODE: Cross-Frame Video Communication
+    // ============================================
+
+    // Listen for messages from iframes (Global Mode)
+    if (isMainFrame) {
+        window.addEventListener('message', handleIframeMessage);
+        console.log('[OpenSync] Main frame: listening for iframe video messages');
+    }
+
+    function handleIframeMessage(event) {
+        // Only process messages from child frames with our protocol
+        if (event.data?.source !== 'OPENSYNC_IFRAME') return;
+
+        const { type, frameId, state, event: videoEvent } = event.data;
+
+        switch (type) {
+            case 'VIDEO_FOUND':
+                console.log('[OpenSync] VIDEO_FOUND from iframe:', frameId);
+                iframeVideoSource = event.source;
+                iframeVideoFrameId = frameId;
+                
+                // If we're in Global Mode and connected, this is good news
+                if (isGlobalMode && isMainFrame) {
+                    OpenSyncOverlay.addSystemMessage('Video detected in embedded player');
+                }
+                
+                // If we don't have a local video, automatically use iframe video
+                if (!hasLocalVideo && !OpenSyncVideoController.isAvailable()) {
+                    console.log('[OpenSync] No local video, using iframe video for sync');
+                    isGlobalMode = true;
+                }
+                break;
+
+            case 'VIDEO_EVENT':
+                // Relay iframe video events to the sync server
+                if (!isConnected || !isGlobalMode) return;
+                
+                console.log('[OpenSync] VIDEO_EVENT from iframe:', videoEvent, state?.currentTime?.toFixed(2));
+                handleIframeVideoEvent(videoEvent, state);
+                break;
+
+            case 'STATE_RESPONSE':
+                // Handle state response from iframe (for sync requests)
+                console.log('[OpenSync] STATE_RESPONSE from iframe:', state);
+                if (state && isConnected) {
+                    // Use this state for sync responses
+                    handleIframeStateResponse(state);
+                }
+                break;
+        }
+    }
+
+    // Handle video events forwarded from iframe
+    function handleIframeVideoEvent(eventType, state) {
+        if (!isConnected || !state) return;
+
+        lastLocalActionTime = Date.now();
+
+        switch (eventType) {
+            case 'play':
+                if (lastPlayingState === true) return;
+                lastPlayingState = true;
+                console.log('[OpenSync] Iframe PLAY at', state.currentTime?.toFixed(2));
+                OpenSyncWebSocketClient.sendPlay(state.currentTime);
+                break;
+
+            case 'pause':
+                if (lastPlayingState === false) return;
+                lastPlayingState = false;
+                console.log('[OpenSync] Iframe PAUSE at', state.currentTime?.toFixed(2));
+                OpenSyncWebSocketClient.sendPause(state.currentTime);
+                break;
+
+            case 'seek':
+                const effectiveIsPlaying = state.isPlaying || (lastPlayingState === true);
+                console.log('[OpenSync] Iframe SEEK to', state.currentTime?.toFixed(2), 'isPlaying:', effectiveIsPlaying);
+                OpenSyncWebSocketClient.sendSeek(state.currentTime, effectiveIsPlaying);
+                break;
+        }
+    }
+
+    // Handle state response from iframe for sync requests
+    function handleIframeStateResponse(state) {
+        if (!isHost) return;
+
+        console.log('[OpenSync] Responding to sync request with iframe state:', state);
+        OpenSyncWebSocketClient.sendSync({
+            currentTime: state.currentTime,
+            isPlaying: state.isPlaying,
+            playbackRate: state.playbackRate || 1
+        });
+    }
+
+    // Send command to iframe video
+    function sendCommandToIframe(type, payload = {}) {
+        if (!iframeVideoSource) {
+            console.warn('[OpenSync] Cannot send command: no iframe video source');
+            return false;
+        }
+
+        try {
+            iframeVideoSource.postMessage({
+                source: 'OPENSYNC_MAIN',
+                type: type,
+                ...payload
+            }, '*');
+            console.log('[OpenSync] Sent', type, 'command to iframe');
+            return true;
+        } catch (e) {
+            console.error('[OpenSync] Failed to send command to iframe:', e);
+            return false;
+        }
+    }
+
+    // Request state from iframe video
+    function requestIframeState() {
+        if (!iframeVideoSource) return;
+        sendCommandToIframe('GET_STATE');
+    }
+
+    // ============================================
+    // END GLOBAL MODE
+    // ============================================
+
     // Extract content/video ID from URL based on platform
     // This is critical to prevent infinite refresh loops
     function getContentIdFromUrl(url, platform) {
@@ -456,6 +587,42 @@
 
     // Handle Force Sync button click
     function handleForceSync() {
+        // Global Mode: Request state from iframe first
+        if (isGlobalMode && iframeVideoSource && !OpenSyncVideoController.isAvailable()) {
+            console.log('[OpenSync] Force Sync: Requesting state from iframe (Global Mode)');
+            
+            // Set up a one-time listener for the state response
+            const handleForceSyncResponse = (event) => {
+                if (event.data?.source !== 'OPENSYNC_IFRAME' || event.data.type !== 'STATE_RESPONSE') return;
+                
+                window.removeEventListener('message', handleForceSyncResponse);
+                
+                const state = event.data.state;
+                if (!state || !isConnected) {
+                    if (isMainFrame) {
+                        OpenSyncOverlay.addSystemMessage('Error: No video state available');
+                    }
+                    return;
+                }
+                
+                console.log('[OpenSync] Force Sync with iframe state at', state.currentTime?.toFixed(2));
+                OpenSyncWebSocketClient.sendForceSync(state.currentTime);
+                
+                if (isMainFrame) {
+                    OpenSyncOverlay.addSystemMessage(`Force syncing all users to ${state.currentTime?.toFixed(1)}s...`);
+                }
+            };
+            
+            window.addEventListener('message', handleForceSyncResponse);
+            requestIframeState();
+            
+            // Timeout fallback
+            setTimeout(() => {
+                window.removeEventListener('message', handleForceSyncResponse);
+            }, 2000);
+            return;
+        }
+
         // Force re-detection of video element before getting state
         // This ensures we have the correct video for streaming platforms
         if (currentPlatform) {
@@ -586,14 +753,55 @@
 
         console.log('[OpenSync] Remote command received:', type, 'at', payload.currentTime?.toFixed(2));
 
+        // Global Mode: Relay commands to iframe if we have an iframe video source
+        if (isGlobalMode && iframeVideoSource && !OpenSyncVideoController.isAvailable()) {
+            console.log('[OpenSync] Relaying command to iframe (Global Mode)');
+            
+            switch (type) {
+                case 'PLAY':
+                    lastPlayingState = true;
+                    sendCommandToIframe('PLAY', { currentTime: payload.currentTime });
+                    break;
+                case 'PAUSE':
+                    lastPlayingState = false;
+                    sendCommandToIframe('PAUSE', { currentTime: payload.currentTime });
+                    break;
+                case 'SEEK':
+                    sendCommandToIframe('SEEK', { 
+                        currentTime: payload.currentTime, 
+                        isPlaying: payload.isPlaying 
+                    });
+                    if (payload.isPlaying === true) {
+                        lastPlayingState = true;
+                    } else if (payload.isPlaying === false) {
+                        lastPlayingState = false;
+                    }
+                    break;
+                case 'BUFFER':
+                    if (payload.isBuffering) {
+                        lastPlayingState = false;
+                        sendCommandToIframe('PAUSE', { currentTime: payload.currentTime });
+                        if (isMainFrame) {
+                            OpenSyncOverlay.addSystemMessage(payload.username + ' is buffering...');
+                        }
+                    }
+                    break;
+            }
+            return;
+        }
+
+        // Standard mode: Control local video directly
         switch (type) {
             case 'PLAY':
                 // Update local state tracker so we don't echo back
                 lastPlayingState = true;
                 // Only seek if we are significantly off (> 0.5s)
-                const currentDiffPlay = Math.abs(OpenSyncVideoController.getState().currentTime - payload.currentTime);
-                if (currentDiffPlay > 0.5) {
-                    OpenSyncVideoController.seek(payload.currentTime);
+                const localState = OpenSyncVideoController.getState();
+                if (localState) {
+                    const currentDiffPlay = Math.abs(localState.currentTime - payload.currentTime);
+                    if (currentDiffPlay > 0.5) {
+                        OpenSyncVideoController.seek(payload.currentTime);
+                    }
                 }
                 OpenSyncVideoController.play();
                 break;
@@ -601,9 +809,12 @@
                 // Update local state tracker so we don't echo back
                 lastPlayingState = false;
                 // Only seek if we are significantly off (> 0.5s)
-                const currentDiffPause = Math.abs(OpenSyncVideoController.getState().currentTime - payload.currentTime);
-                if (currentDiffPause > 0.5) {
-                    OpenSyncVideoController.seek(payload.currentTime);
+                const localStatePause = OpenSyncVideoController.getState();
+                if (localStatePause) {
+                    const currentDiffPause = Math.abs(localStatePause.currentTime - payload.currentTime);
+                    if (currentDiffPause > 0.5) {
+                        OpenSyncVideoController.seek(payload.currentTime);
+                    }
                 }
                 OpenSyncVideoController.pause();
                 break;
@@ -646,6 +857,19 @@
             lastPlayingState = payload.isPlaying;
         }
 
+        // Global Mode: Relay sync to iframe
+        if (isGlobalMode && iframeVideoSource && !OpenSyncVideoController.isAvailable()) {
+            console.log('[OpenSync] Relaying sync to iframe (Global Mode)');
+            sendCommandToIframe('SYNC', {
+                state: {
+                    currentTime: payload.currentTime,
+                    isPlaying: payload.isPlaying,
+                    playbackRate: payload.playbackRate
+                }
+            });
+            return;
+        }
+
         OpenSyncVideoController.syncToState({
             currentTime: payload.currentTime,
             isPlaying: payload.isPlaying,
@@ -656,6 +880,13 @@
     function handleSyncRequest(payload) {
         // Only host responds to sync requests
         if (!isHost) return;
+
+        // Global Mode: Request state from iframe
+        if (isGlobalMode && iframeVideoSource && !OpenSyncVideoController.isAvailable()) {
+            console.log('[OpenSync] Requesting state from iframe for sync request');
+            requestIframeState();
+            return; // Response will be sent when STATE_RESPONSE is received
+        }
 
         const state = OpenSyncVideoController.getState();
         if (state) {
@@ -757,8 +988,13 @@
 
     async function handleCreateRoom(message, sendResponse) {
         try {
-            // Set platform if provided
-            if (message.platform) {
+            // Check if Global Mode is requested
+            if (message.globalMode) {
+                isGlobalMode = true;
+                currentPlatform = 'global';
+                console.log('[OpenSync] Creating room in Global Mode');
+            } else if (message.platform) {
+                // Set platform if provided
                 currentPlatform = message.platform;
                 OpenSyncVideoController.setPlatform(currentPlatform);
                 console.log('[OpenSync] Creating room with platform:', currentPlatform);
@@ -777,9 +1013,19 @@
                 init();
             }
 
-            // Re-detect video with platform
-            if (currentPlatform) {
+            // Re-detect video with platform (skip for Global Mode - will use iframe detection)
+            if (currentPlatform && currentPlatform !== 'global') {
                 OpenSyncVideoController.redetect(currentPlatform);
+            }
+
+            // Check if we have a local video
+            hasLocalVideo = OpenSyncVideoController.isAvailable();
+            console.log('[OpenSync] Has local video:', hasLocalVideo, 'Has iframe video:', !!iframeVideoSource);
+
+            // If no local video and no iframe video yet, that's okay for Global Mode
+            // The iframe will announce itself when the video loads
+            if (!hasLocalVideo && !iframeVideoSource && !isGlobalMode) {
+                console.warn('[OpenSync] No video detected, but continuing...');
             }
 
             // Connect to server
@@ -791,7 +1037,7 @@
                 return;
             }
 
-            // Create room with platform
+            // Create room with platform (use 'global' for Global Mode)
             OpenSyncWebSocketClient.createRoom(username, currentPlatform);
 
             // Wait for room creation with timeout
@@ -887,6 +1133,31 @@
         // Show message to user
         if (isMainFrame) {
             OpenSyncOverlay.addSystemMessage('Syncing to ' + payload.currentTime?.toFixed(1) + 's...');
+        }
+
+        // Global Mode: Relay force sync to iframe
+        if (isGlobalMode && iframeVideoSource && !OpenSyncVideoController.isAvailable()) {
+            console.log('[OpenSync] Relaying Force Sync to iframe (Global Mode)');
+            
+            // Step 1: Pause
+            sendCommandToIframe('PAUSE', { currentTime: payload.currentTime });
+            
+            // Step 2: Seek (with delay)
+            setTimeout(() => {
+                sendCommandToIframe('SEEK', { currentTime: payload.currentTime, isPlaying: true });
+                
+                // Step 3: Play after seek settles
+                setTimeout(() => {
+                    sendCommandToIframe('PLAY', { currentTime: payload.currentTime });
+                    lastPlayingState = true;
+                    lastLocalActionTime = 0;
+                    
+                    if (isMainFrame) {
+                        OpenSyncOverlay.addSystemMessage('Synced!');
+                    }
+                }, 500);
+            }, 200);
+            return;
         }
 
         // Execute force sync sequence: pause → seek → play
