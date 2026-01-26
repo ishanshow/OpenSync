@@ -64,7 +64,10 @@ wss.on('connection', (ws) => {
         ws: ws,
         roomCode: null,
         username: null,
-        isHost: false
+        isHost: false,
+        currentUrl: null, // Track client's current URL to prevent video command relay during transitions
+        isNavigating: false, // True when client just sent URL_CHANGE (in transition)
+        isReady: true // Track if client's video is ready to play (for sync on URL change)
     };
 
     // Handle messages
@@ -121,7 +124,7 @@ function handleMessage(ws, clientData, message) {
             break;
 
         case 'LEAVE_ROOM':
-            handleLeaveRoom(clientData);
+            handleLeaveRoom(clientData, true); // true = explicit leave (no grace period)
             break;
 
         case 'PLAY':
@@ -145,6 +148,10 @@ function handleMessage(ws, clientData, message) {
 
         case 'URL_CHANGE':
             handleUrlChange(clientData, payload);
+            break;
+
+        case 'VIDEO_READY':
+            handleVideoReady(clientData, payload);
             break;
 
         case 'FORCE_SYNC':
@@ -213,6 +220,22 @@ function handleJoinRoom(ws, clientData, payload) {
         console.log(`[OpenSync Server] Room ${roomCode} deletion cancelled (user joined)`);
     }
 
+    // Check if this user is reconnecting after a redirect/navigation (within grace period)
+    let isReconnection = false;
+    if (room.pendingDisconnects && room.pendingDisconnects.has(username)) {
+        const pendingData = room.pendingDisconnects.get(username);
+        clearTimeout(pendingData.timeout);
+        room.pendingDisconnects.delete(username);
+        isReconnection = true;
+        console.log(`[OpenSync Server] ${username} reconnected within grace period (navigation)`);
+        
+        // Restore host status if they were the host
+        if (pendingData.wasHost) {
+            clientData.isHost = true;
+            room.host = ws;
+        }
+    }
+
     // Cleanup existing sessions for this username (prevent duplicates on reload)
     for (const [existingWs, existingClient] of room.clients.entries()) {
         if (existingClient.username === username && existingWs !== ws) {
@@ -228,27 +251,32 @@ function handleJoinRoom(ws, clientData, payload) {
 
     clientData.roomCode = roomCode;
     clientData.username = username;
-    clientData.isHost = false;
+    if (!isReconnection) {
+        clientData.isHost = false;
+    }
 
     room.clients.set(ws, clientData);
 
-    const participantCount = room.clients.size;
+    const participantCount = room.clients.size + (room.pendingDisconnects ? room.pendingDisconnects.size : 0);
 
-    console.log(`[OpenSync Server] ${username} joined room ${roomCode} (${participantCount} participants)`);
+    console.log(`[OpenSync Server] ${username} ${isReconnection ? 'reconnected to' : 'joined'} room ${roomCode} (${participantCount} participants)`);
 
     // Send confirmation to joiner
     sendToClient(ws, 'ROOM_JOINED', {
         roomCode: roomCode,
         participants: participantCount,
         currentUrl: room.currentUrl,
-        platform: room.platform
+        platform: room.platform,
+        isReconnection: isReconnection
     });
 
-    // Notify others in room
-    broadcastToRoom(roomCode, 'USER_JOINED', {
-        username: username,
-        participants: participantCount
-    }, ws);
+    // Only notify others if this is NOT a reconnection (to avoid leave/join spam during navigation)
+    if (!isReconnection) {
+        broadcastToRoom(roomCode, 'USER_JOINED', {
+            username: username,
+            participants: participantCount
+        }, ws);
+    }
 
     // Send current video state if available
     if (room.videoState) {
@@ -257,7 +285,7 @@ function handleJoinRoom(ws, clientData, payload) {
 }
 
 // Leave room
-function handleLeaveRoom(clientData) {
+function handleLeaveRoom(clientData, isExplicitLeave = false) {
     const { roomCode, username, ws } = clientData;
 
     if (!roomCode) return;
@@ -265,37 +293,148 @@ function handleLeaveRoom(clientData) {
     const room = rooms.get(roomCode);
     if (!room) return;
 
-    // Remove client from room
+    // Check if this client is still in the room (might have been replaced by reconnection)
+    const clientInRoom = room.clients.get(ws);
+    if (!clientInRoom) {
+        // This client was already removed (likely replaced by a reconnecting session)
+        // Don't add to pendingDisconnects or broadcast leave
+        console.log(`[OpenSync Server] Client ${username} already removed from room (likely reconnected)`);
+        clientData.roomCode = null;
+        clientData.username = null;
+        clientData.isHost = false;
+        return;
+    }
+
+    // Remove client from active clients
     room.clients.delete(ws);
+    
+    // Check if a client with the same username is already in the room (reconnected)
+    // If so, this is the old session being cleaned up - don't add to pendingDisconnects
+    let hasReconnected = false;
+    for (const [existingWs, existingClient] of room.clients.entries()) {
+        if (existingClient.username === username) {
+            hasReconnected = true;
+            console.log(`[OpenSync Server] ${username} already reconnected, not adding to pendingDisconnects`);
+            break;
+        }
+    }
+    
+    if (hasReconnected) {
+        // Client already reconnected, just clean up
+        clientData.roomCode = null;
+        clientData.username = null;
+        clientData.isHost = false;
+        return;
+    }
 
-    const participantCount = room.clients.size;
-
-    console.log(`[OpenSync Server] ${username} left room ${roomCode} (${participantCount} remaining)`);
-
-    // If room is empty, set a timeout to delete it (grace period for refresh/nav)
-    if (participantCount === 0) {
-        console.log(`[OpenSync Server] Room ${roomCode} is empty. Scheduling deletion in 2 minutes...`);
-        if (room.deleteTimeout) clearTimeout(room.deleteTimeout);
-
-        room.deleteTimeout = setTimeout(() => {
-            if (rooms.has(roomCode) && rooms.get(roomCode).clients.size === 0) {
-                rooms.delete(roomCode);
-                console.log(`[OpenSync Server] Room ${roomCode} deleted (expired grace period)`);
+    // If this is NOT an explicit leave (i.e., disconnect due to navigation/refresh),
+    // add the user to pending disconnects with a grace period
+    // This allows them to reconnect without triggering leave/join messages
+    const RECONNECT_GRACE_PERIOD = 30 * 1000; // 30 seconds grace period for navigation
+    
+    if (!isExplicitLeave && username) {
+        // Initialize pendingDisconnects map if needed
+        if (!room.pendingDisconnects) {
+            room.pendingDisconnects = new Map();
+        }
+        
+        // Clear any existing pending disconnect for this user
+        if (room.pendingDisconnects.has(username)) {
+            clearTimeout(room.pendingDisconnects.get(username).timeout);
+        }
+        
+        console.log(`[OpenSync Server] ${username} disconnected from room ${roomCode} (grace period: ${RECONNECT_GRACE_PERIOD/1000}s)`);
+        
+        // Add to pending disconnects with a timeout
+        const timeoutId = setTimeout(() => {
+            // Grace period expired - now actually remove the user
+            if (room.pendingDisconnects && room.pendingDisconnects.has(username)) {
+                room.pendingDisconnects.delete(username);
+                
+                const effectiveParticipants = room.clients.size + (room.pendingDisconnects ? room.pendingDisconnects.size : 0);
+                
+                console.log(`[OpenSync Server] ${username} grace period expired, removed from room ${roomCode} (${effectiveParticipants} remaining)`);
+                
+                // Notify remaining clients
+                if (room.clients.size > 0) {
+                    broadcastToRoom(roomCode, 'USER_LEFT', {
+                        username: username,
+                        participants: effectiveParticipants
+                    });
+                }
+                
+                // If the disconnected user was host, assign new host
+                if (clientData.isHost && room.clients.size > 0) {
+                    const newHost = room.clients.values().next().value;
+                    newHost.isHost = true;
+                    room.host = newHost.ws;
+                    console.log(`[OpenSync Server] New host assigned: ${newHost.username}`);
+                }
+                
+                // Check if room should be deleted
+                if (room.clients.size === 0 && room.pendingDisconnects.size === 0) {
+                    console.log(`[OpenSync Server] Room ${roomCode} is empty. Scheduling deletion in 2 minutes...`);
+                    if (room.deleteTimeout) clearTimeout(room.deleteTimeout);
+                    
+                    room.deleteTimeout = setTimeout(() => {
+                        if (rooms.has(roomCode)) {
+                            const r = rooms.get(roomCode);
+                            if (r.clients.size === 0 && (!r.pendingDisconnects || r.pendingDisconnects.size === 0)) {
+                                rooms.delete(roomCode);
+                                console.log(`[OpenSync Server] Room ${roomCode} deleted (expired grace period)`);
+                            }
+                        }
+                    }, 2 * 60 * 1000); // 2 minutes
+                }
             }
-        }, 2 * 60 * 1000); // 2 minutes
-    } else {
-        // Notify remaining clients
-        broadcastToRoom(roomCode, 'USER_LEFT', {
-            username: username,
-            participants: participantCount
+        }, RECONNECT_GRACE_PERIOD);
+        
+        room.pendingDisconnects.set(username, {
+            timeout: timeoutId,
+            wasHost: clientData.isHost,
+            disconnectedAt: Date.now()
         });
+        
+    } else {
+        // Explicit leave - immediately remove without grace period
+        const participantCount = room.clients.size + (room.pendingDisconnects ? room.pendingDisconnects.size : 0);
+        
+        console.log(`[OpenSync Server] ${username} explicitly left room ${roomCode} (${participantCount} remaining)`);
+        
+        // Clear from pending disconnects if present
+        if (room.pendingDisconnects && room.pendingDisconnects.has(username)) {
+            clearTimeout(room.pendingDisconnects.get(username).timeout);
+            room.pendingDisconnects.delete(username);
+        }
 
-        // If host left, assign new host
-        if (clientData.isHost && room.clients.size > 0) {
-            const newHost = room.clients.values().next().value;
-            newHost.isHost = true;
-            room.host = newHost.ws;
-            console.log(`[OpenSync Server] New host assigned: ${newHost.username}`);
+        // If room is empty, set a timeout to delete it
+        if (participantCount === 0) {
+            console.log(`[OpenSync Server] Room ${roomCode} is empty. Scheduling deletion in 2 minutes...`);
+            if (room.deleteTimeout) clearTimeout(room.deleteTimeout);
+
+            room.deleteTimeout = setTimeout(() => {
+                if (rooms.has(roomCode)) {
+                    const r = rooms.get(roomCode);
+                    if (r.clients.size === 0 && (!r.pendingDisconnects || r.pendingDisconnects.size === 0)) {
+                        rooms.delete(roomCode);
+                        console.log(`[OpenSync Server] Room ${roomCode} deleted (expired grace period)`);
+                    }
+                }
+            }, 2 * 60 * 1000); // 2 minutes
+        } else {
+            // Notify remaining clients
+            broadcastToRoom(roomCode, 'USER_LEFT', {
+                username: username,
+                participants: participantCount
+            });
+
+            // If host left, assign new host
+            if (clientData.isHost && room.clients.size > 0) {
+                const newHost = room.clients.values().next().value;
+                newHost.isHost = true;
+                room.host = newHost.ws;
+                console.log(`[OpenSync Server] New host assigned: ${newHost.username}`);
+            }
         }
     }
 
@@ -313,6 +452,13 @@ function handleVideoControl(clientData, type, payload) {
 
     const room = rooms.get(roomCode);
     if (!room) return;
+
+    // Ignore video commands from clients who are navigating (changing videos)
+    // This prevents stale video events from old video being relayed
+    if (clientData.isNavigating) {
+        console.log(`[OpenSync Server] Ignoring ${type} from ${username} (client is navigating)`);
+        return;
+    }
 
     console.log(`[OpenSync Server] ${type} from ${username} at ${payload.currentTime}${payload.isPlaying !== undefined ? ` (isPlaying: ${payload.isPlaying})` : ''}`);
 
@@ -335,23 +481,49 @@ function handleVideoControl(clientData, type, payload) {
         lastUpdated: Date.now()
     };
 
-    // Broadcast to all other clients - include isPlaying for SEEK, isBuffering for BUFFER
-    broadcastToRoom(roomCode, type, {
-        currentTime: payload.currentTime,
-        isPlaying: isPlaying,
-        isBuffering: payload.isBuffering,
-        username: username
-    }, ws);
+    // Only broadcast to clients on the same URL (or clients without URL tracking)
+    // This prevents video commands from being relayed during URL transitions
+    const senderUrl = clientData.currentUrl || room.currentUrl;
+    
+    room.clients.forEach((client) => {
+        if (client.ws !== ws && client.ws.readyState === WebSocket.OPEN) {
+            // Skip clients who are navigating
+            if (client.isNavigating) {
+                console.log(`[OpenSync Server] Skipping ${type} to ${client.username} (navigating)`);
+                return;
+            }
+            
+            // Check if client is on the same URL (or URL unknown)
+            const clientUrl = client.currentUrl || room.currentUrl;
+            if (senderUrl && clientUrl && senderUrl !== clientUrl) {
+                console.log(`[OpenSync Server] Skipping ${type} to ${client.username} (different URL)`);
+                return;
+            }
+            
+            sendToClient(client.ws, type, {
+                currentTime: payload.currentTime,
+                isPlaying: isPlaying,
+                isBuffering: payload.isBuffering,
+                username: username
+            });
+        }
+    });
 }
 
 // Handle sync state updates
 function handleSync(clientData, payload) {
-    const { roomCode, ws } = clientData;
+    const { roomCode, ws, username } = clientData;
 
     if (!roomCode) return;
 
     const room = rooms.get(roomCode);
     if (!room) return;
+    
+    // Ignore sync from clients who are navigating
+    if (clientData.isNavigating) {
+        console.log(`[OpenSync Server] Ignoring SYNC from ${username} (client is navigating)`);
+        return;
+    }
 
     // Update room's video state
     room.videoState = {
@@ -361,8 +533,25 @@ function handleSync(clientData, payload) {
         lastUpdated: Date.now()
     };
 
-    // Broadcast to all other clients
-    broadcastToRoom(roomCode, 'SYNC', room.videoState, ws);
+    // Only broadcast to clients on the same URL
+    const senderUrl = clientData.currentUrl || room.currentUrl;
+    
+    room.clients.forEach((client) => {
+        if (client.ws !== ws && client.ws.readyState === WebSocket.OPEN) {
+            // Skip clients who are navigating
+            if (client.isNavigating) {
+                return;
+            }
+            
+            // Check if client is on the same URL
+            const clientUrl = client.currentUrl || room.currentUrl;
+            if (senderUrl && clientUrl && senderUrl !== clientUrl) {
+                return;
+            }
+            
+            sendToClient(client.ws, 'SYNC', room.videoState);
+        }
+    });
 }
 
 // Handle sync requests (from newly joined clients)
@@ -407,13 +596,95 @@ function handleUrlChange(clientData, payload) {
     if (!room) return;
 
     console.log(`[OpenSync Server] URL changed to ${payload.url} by ${username}`);
+    
+    // Mark client as navigating - their video events should be ignored temporarily
+    clientData.isNavigating = true;
+    clientData.currentUrl = payload.url;
+    
+    // Clear navigating flag after a delay (allow time for video transition)
+    setTimeout(() => {
+        clientData.isNavigating = false;
+    }, 3000);
+    
     room.currentUrl = payload.url;
+    
+    // Mark ALL clients as NOT ready - they need to load the new video
+    // This triggers the "wait for all ready" sync mechanism
+    room.clients.forEach((client) => {
+        client.isReady = false;
+    });
+    
+    // Store the sync time from the URL changer (they know where they are in the video)
+    room.pendingSyncTime = payload.currentTime || 0;
+    room.pendingSyncUser = username;
+    
+    console.log(`[OpenSync Server] All clients marked not ready, pending sync at ${room.pendingSyncTime}s`);
 
-    // Broadcast to all other clients
+    // Broadcast to all other clients (they need to redirect/load)
     broadcastToRoom(roomCode, 'URL_CHANGE', {
         url: payload.url,
-        username: username
+        username: username,
+        syncTime: room.pendingSyncTime // Include sync time so they know where to seek
     }, ws);
+}
+
+// Handle client reporting video is ready to play
+function handleVideoReady(clientData, payload) {
+    const { roomCode, username, ws } = clientData;
+
+    if (!roomCode) return;
+
+    const room = rooms.get(roomCode);
+    if (!room) return;
+
+    // Mark this client as ready
+    clientData.isReady = true;
+    clientData.currentUrl = room.currentUrl; // Ensure URL is synced
+    
+    console.log(`[OpenSync Server] ${username} video is ready`);
+    
+    // Check if ALL clients are now ready
+    let allReady = true;
+    let readyCount = 0;
+    let totalCount = 0;
+    
+    room.clients.forEach((client) => {
+        totalCount++;
+        if (client.isReady) {
+            readyCount++;
+        } else {
+            allReady = false;
+        }
+    });
+    
+    console.log(`[OpenSync Server] Ready status: ${readyCount}/${totalCount}`);
+    
+    if (allReady && totalCount > 0) {
+        // All clients are ready! Send ALL_READY to sync and play
+        const syncTime = room.pendingSyncTime || 0;
+        
+        console.log(`[OpenSync Server] All ${totalCount} clients ready! Broadcasting ALL_READY at ${syncTime}s`);
+        
+        // Broadcast to ALL clients (including sender)
+        room.clients.forEach((client) => {
+            sendToClient(client.ws, 'ALL_READY', {
+                currentTime: syncTime,
+                participants: totalCount
+            });
+        });
+        
+        // Clear pending sync
+        room.pendingSyncTime = null;
+        room.pendingSyncUser = null;
+    } else {
+        // Notify all clients of loading progress
+        room.clients.forEach((client) => {
+            sendToClient(client.ws, 'WAITING_FOR_OTHERS', {
+                ready: readyCount,
+                total: totalCount
+            });
+        });
+    }
 }
 
 // Handle Force Sync

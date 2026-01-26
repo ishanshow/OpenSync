@@ -182,6 +182,18 @@ const OpenSyncWebSocketClient = (function () {
                     }
                     break;
 
+                case 'ALL_READY':
+                    if (eventCallbacks.onAllReady) {
+                        eventCallbacks.onAllReady(message.payload);
+                    }
+                    break;
+
+                case 'WAITING_FOR_OTHERS':
+                    if (eventCallbacks.onWaitingForOthers) {
+                        eventCallbacks.onWaitingForOthers(message.payload);
+                    }
+                    break;
+
                 default:
                     console.log('[OpenSync] Unknown message type:', message.type);
             }
@@ -209,8 +221,13 @@ const OpenSyncWebSocketClient = (function () {
 
     // ... (existing create/join room) ...
 
-    function sendUrlChange(url) {
-        return send('URL_CHANGE', { roomCode, url });
+    function sendUrlChange(url, currentTime = 0) {
+        return send('URL_CHANGE', { roomCode, url, currentTime });
+    }
+
+    // Send video ready signal (after video has loaded and is ready to play)
+    function sendVideoReady() {
+        return send('VIDEO_READY', { roomCode });
     }
 
     // Send Force Sync command to all users
@@ -316,6 +333,7 @@ const OpenSyncWebSocketClient = (function () {
         sendSeek,
         sendChat,
         sendUrlChange,
+        sendVideoReady,
         sendForceSync,
         requestSync,
         getStatus
