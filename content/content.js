@@ -32,14 +32,7 @@
     let isConnected = false;
     let isHost = false;
     let roomCode = null;
-    // Persist username to session storage to avoid multiple "users" on reload
-    let savedUsername = null;
-    try {
-        const sessionData = sessionStorage.getItem('opensync_room');
-        if (sessionData) savedUsername = JSON.parse(sessionData).username;
-    } catch (e) { }
-
-    let username = savedUsername || 'User_' + Math.random().toString(36).substring(2, 6);
+    let username = 'User_' + Math.random().toString(36).substring(2, 6);
     let serverUrl = 'ws://localhost:3000';
     let participantCount = 1;
     let currentPlatform = null; // Platform type: 'netflix', 'primevideo', 'hotstar'
@@ -60,6 +53,24 @@
     let iframeVideoSource = null; // Reference to iframe window containing video
     let iframeVideoFrameId = null; // URL/ID of iframe with video
     let hasLocalVideo = false; // Whether main frame has a video
+
+    // Redirect/Navigation state - prevents race conditions during URL changes
+    let isPendingRedirect = false; // True when we're about to redirect due to URL_CHANGE
+    let isNavigatingAway = false; // True when WE changed the video (don't echo back)
+    let pendingRedirectUrl = null; // The URL we're redirecting to
+
+    // Video ready sync state - ensures all users are ready before playing
+    let isWaitingForAllReady = false; // True when waiting for all users to be ready
+    let pendingSyncTime = 0; // Time to sync to when all are ready
+
+    // Tab-specific session ID - isolates sync to the tab that joined the room
+    // This prevents other tabs from hijacking the sync session
+    let tabSessionId = sessionStorage.getItem('opensync_tab_session_id');
+    if (!tabSessionId) {
+        tabSessionId = 'tab_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+        sessionStorage.setItem('opensync_tab_session_id', tabSessionId);
+    }
+    console.log('[OpenSync] Tab session ID:', tabSessionId);
 
     // ============================================
     // GLOBAL MODE: Cross-Frame Video Communication
@@ -117,6 +128,12 @@
     // Handle video events forwarded from iframe
     function handleIframeVideoEvent(eventType, state) {
         if (!isConnected || !state) return;
+        
+        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
+        if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
+            console.log('[OpenSync] Skipping iframe event broadcast (navigation/loading in progress)');
+            return;
+        }
 
         lastLocalActionTime = Date.now();
 
@@ -311,48 +328,66 @@
             // Auto-detect navigation (SPA)
             setInterval(checkUrl, 1000);
 
-            // Detect Full Page Navigation
-            try {
-                if (sessionStorage.getItem('opensync_redirect')) {
-                    console.log('[OpenSync] Loaded via sync redirect, adhering to room.');
-                    // Clear the redirect flag after a delay to ensure it's processed
-                    // but also cleared for future navigations
-                    setTimeout(() => {
-                        sessionStorage.removeItem('opensync_redirect');
-                    }, 2000);
-                    isNavigation = false;
-                } else {
-                    const storedUrl = sessionStorage.getItem('opensync_last_url');
-                    // Check if content actually changed (not just params)
-                    if (storedUrl && !isSameContent(storedUrl, window.location.href, currentPlatform)) {
-                        console.log('[OpenSync] Detected content navigation from', storedUrl);
-                        isNavigation = true;
-                    }
-                }
-                sessionStorage.setItem('opensync_last_url', window.location.href);
-            } catch (e) { }
-
             isInitialized = true;
 
-            // Check for existing session and reconnect (tab-specific)
-            // We use sessionStorage so only THIS specific tab reconnects on refresh.
-            // New tabs will not inherit this (avoiding "all tabs playing" issue).
+            // Check for existing session and reconnect using browser.storage.local
+            // This persists across origins (critical for cross-site redirects)
             if (isMainFrame) {
                 try {
-                    const sessionData = sessionStorage.getItem('opensync_room');
-                    if (sessionData) {
-                        const data = JSON.parse(sessionData);
+                    const stored = await browser.storage.local.get(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url']);
+                    
+                    // Check if we just redirected (deliberate cross-origin redirect for sync)
+                    const isRedirectingForSync = !!stored.opensync_redirect;
+                    if (isRedirectingForSync) {
+                        console.log('[OpenSync] Loaded via sync redirect, adhering to room.');
+                        isNavigation = false;
+                        
+                        // IMPORTANT: Update the tab session ID in storage since this is the new active tab
+                        // This allows the redirected tab to "take over" the session
+                        if (stored.opensync_room) {
+                            stored.opensync_room.tabSessionId = tabSessionId;
+                            await browser.storage.local.set({ opensync_room: stored.opensync_room });
+                            console.log('[OpenSync] Updated tab session ID after redirect');
+                        }
+                        
+                        // Clear redirect flag after processing
+                        setTimeout(() => {
+                            browser.storage.local.remove('opensync_redirect').catch(() => {});
+                        }, 2000);
+                    }
+                    
+                    if (stored.opensync_room) {
+                        const data = stored.opensync_room;
+                        
+                        // Check if this tab should reconnect:
+                        // 1. If we just redirected for sync (cross-origin navigation) - YES
+                        // 2. If our tab session ID matches the stored one - YES (same tab, maybe refreshed)
+                        // 3. Otherwise - NO (different tab, don't hijack the session)
+                        const shouldReconnect = isRedirectingForSync || 
+                                               (data.tabSessionId && data.tabSessionId === tabSessionId);
+                        
+                        if (!shouldReconnect) {
+                            console.log('[OpenSync] Found session but it belongs to a different tab, skipping reconnect');
+                            console.log('[OpenSync] Stored tab ID:', data.tabSessionId, '| Our tab ID:', tabSessionId);
+                            return; // Don't reconnect - this is a different tab
+                        }
+                        
                         console.log('[OpenSync] Found session token, reconnecting:', data.roomCode);
 
                         serverUrl = data.serverUrl || serverUrl;
-                        username = data.username || username; // update local var
+                        username = data.username || username;
+                        
+                        // Set platform from stored data
+                        if (data.platform) {
+                            currentPlatform = data.platform;
+                        }
 
                         const connected = await connectToServer(serverUrl);
                         if (connected) {
                             console.log('[OpenSync] Rejoining room:', data.roomCode);
                             OpenSyncWebSocketClient.joinRoom(data.roomCode, username);
 
-                            // Wait for room join confirmation before updating background state
+                            // Wait for room join confirmation
                             let waitedForJoin = 0;
                             while (!roomCode && waitedForJoin < 3000) {
                                 await new Promise(resolve => setTimeout(resolve, 100));
@@ -376,38 +411,56 @@
                             } else {
                                 // Failed to rejoin - clear stale session data
                                 console.log('[OpenSync] Failed to rejoin room, clearing session');
-                                sessionStorage.removeItem('opensync_room');
+                                await browser.storage.local.remove(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url', 'opensync_sync_time']);
                                 try {
                                     browser.runtime.sendMessage({ type: 'LEAVE_ROOM' }).catch(() => { });
                                 } catch (e) { }
                             }
 
-                            // If we just redirected (auto-followed), request sync and auto-play
-                            if (sessionStorage.getItem('opensync_just_switched_url')) {
-                                sessionStorage.removeItem('opensync_just_switched_url');
+                            // If we just redirected (auto-followed), wait for video to load then signal ready
+                            if (stored.opensync_just_switched_url) {
+                                await browser.storage.local.remove(['opensync_just_switched_url', 'opensync_sync_time']);
                                 
-                                console.log('[OpenSync] Detected redirect, will sync and auto-play');
+                                console.log('[OpenSync] Detected redirect, waiting for video to load...');
                                 
-                                // Wait for video to be ready, then sync and auto-play
-                                // Use longer delay for streaming sites which load slowly
-                                const delay = (currentPlatform === 'netflix' || currentPlatform === 'primevideo' || currentPlatform === 'hotstar') ? 3000 : 1000;
+                                // Set waiting flag - we're waiting for ALL_READY
+                                isWaitingForAllReady = true;
+                                
+                                if (isMainFrame) {
+                                    OpenSyncOverlay.updateStatus('Loading...');
+                                    OpenSyncOverlay.addSystemMessage('Video loading...');
+                                }
+                                
+                                // Wait for video to be ready, then send VIDEO_READY signal
+                                // Server will send ALL_READY when everyone is ready
+                                const delay = (currentPlatform === 'netflix' || currentPlatform === 'primevideo' || currentPlatform === 'hotstar') ? 4000 : 2000;
                                 
                                 setTimeout(async () => {
-                                    console.log('[OpenSync] Requesting immediate sync after redirect');
-                                    OpenSyncWebSocketClient.requestSync();
-                                    
-                                    // Start auto-play attempts after sync request
-                                    // Give more time for streaming sites to load
-                                    setTimeout(() => {
-                                        console.log('[OpenSync] Starting auto-play sequence...');
-                                        autoPlayAfterRedirect();
-                                    }, 2000);
+                                    // Check if video element exists and is ready
+                                    const video = document.querySelector('video');
+                                    if (video) {
+                                        // Wait for video to have enough data
+                                        const checkVideoReady = () => {
+                                            if (video.readyState >= 2) { // HAVE_CURRENT_DATA or better
+                                                console.log('[OpenSync] Video ready after redirect, signaling server');
+                                                sendVideoReadySignal();
+                                            } else {
+                                                console.log('[OpenSync] Video not ready yet, waiting... readyState:', video.readyState);
+                                                setTimeout(checkVideoReady, 500);
+                                            }
+                                        };
+                                        checkVideoReady();
+                                    } else {
+                                        // No video yet, still send ready signal
+                                        console.log('[OpenSync] No video element found, sending ready signal anyway');
+                                        sendVideoReadySignal();
+                                    }
                                 }, delay);
                             }
                         } else {
                             // Connection failed - clear stale session data
                             console.log('[OpenSync] Failed to reconnect to server, clearing session');
-                            sessionStorage.removeItem('opensync_room');
+                            await browser.storage.local.remove(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url', 'opensync_sync_time']);
                             try {
                                 browser.runtime.sendMessage({ type: 'LEAVE_ROOM' }).catch(() => { });
                             } catch (e) { }
@@ -425,6 +478,12 @@
     // Handle local video events
     function handleLocalPlay(state) {
         if (!isConnected || !state) return;
+        
+        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
+        if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
+            console.log('[OpenSync] Skipping PLAY broadcast (navigation/loading in progress)');
+            return;
+        }
 
         lastLocalActionTime = Date.now();
 
@@ -438,6 +497,12 @@
 
     function handleLocalPause(state) {
         if (!isConnected || !state) return;
+        
+        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
+        if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
+            console.log('[OpenSync] Skipping PAUSE broadcast (navigation/loading in progress)');
+            return;
+        }
 
         lastLocalActionTime = Date.now();
 
@@ -451,6 +516,12 @@
 
     function handleLocalSeek(state) {
         if (!isConnected || !state) return;
+        
+        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
+        if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
+            console.log('[OpenSync] Skipping SEEK broadcast (navigation/loading in progress)');
+            return;
+        }
 
         lastLocalActionTime = Date.now();
         isLocallyBuffering = false; // Reset
@@ -464,6 +535,11 @@
 
     function handleLocalBuffer(state) {
         if (!isConnected) return;
+        
+        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
+        if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
+            return;
+        }
 
         // If we recently interacted, keep priority during buffering
         if (Date.now() - lastLocalActionTime < IGNORE_INCOMING_MS) {
@@ -478,6 +554,11 @@
 
     function handleLocalPlaying(state) {
         if (!isConnected || !state) return;
+        
+        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
+        if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
+            return;
+        }
 
         // If we finished buffering from a local action, extend the lock
         if (isLocallyBuffering) {
@@ -510,8 +591,8 @@
                         OpenSyncOverlay.updateStatus('Disconnected');
                         
                         // Clear background storage if we're not navigating (unexpected disconnect)
-                        // Navigation will handle its own reconnection logic
-                        if (!sessionStorage.getItem('opensync_redirect')) {
+                        // Check the local redirect flag (set by checkUrl initialization)
+                        if (!isInRedirectMode) {
                             // Notify popup that we disconnected
                             try {
                                 browser.runtime.sendMessage({ type: 'ROOM_DISCONNECTED' }).catch(() => { });
@@ -533,7 +614,9 @@
                 onRoomState: handleRoomState,
                 onSyncRequest: handleSyncRequest,
                 onUrlChange: handleRemoteUrlChange,
-                onForceSync: handleRemoteForceSync
+                onForceSync: handleRemoteForceSync,
+                onAllReady: handleAllReady,
+                onWaitingForOthers: handleWaitingForOthers
             });
 
             return true;
@@ -544,7 +627,7 @@
     }
 
     // Room event handlers
-    function handleRoomCreated(payload) {
+    async function handleRoomCreated(payload) {
         roomCode = payload.roomCode;
         isHost = true;
         participantCount = 1;
@@ -554,13 +637,18 @@
         // Initialize content tracking
         lastKnownContentId = getContentIdFromUrl(window.location.href, currentPlatform);
 
-        // Persist session to this tab (so we can reconnect after navigation)
+        // Persist session using browser.storage.local (persists across origins)
+        // Include tabSessionId to prevent other tabs from hijacking this session
         try {
-            sessionStorage.setItem('opensync_room', JSON.stringify({
-                roomCode: payload.roomCode,
-                username: username,
-                serverUrl: serverUrl
-            }));
+            await browser.storage.local.set({
+                opensync_room: {
+                    roomCode: payload.roomCode,
+                    username: username,
+                    serverUrl: serverUrl,
+                    platform: currentPlatform,
+                    tabSessionId: tabSessionId  // Tab-specific ID to isolate sync
+                }
+            });
         } catch (e) {
             console.warn('[OpenSync] Failed to save session:', e);
         }
@@ -661,7 +749,7 @@
         }, 100);
     }
 
-    function handleRoomJoined(payload) {
+    async function handleRoomJoined(payload) {
         roomCode = payload.roomCode;
         isHost = false;
         participantCount = payload.participants || 2;
@@ -674,13 +762,20 @@
 
         console.log('[OpenSync] Joined room:', roomCode);
 
-        // Persist session to this tab FIRST (before any redirect)
+        // Persist session using browser.storage.local FIRST (before any redirect)
+        // This persists across origins which is critical for cross-site redirects
+        // Include tabSessionId to prevent other tabs from hijacking this session
         try {
-            sessionStorage.setItem('opensync_room', JSON.stringify({
-                roomCode: payload.roomCode,
-                username: username,
-                serverUrl: serverUrl
-            }));
+            await browser.storage.local.set({
+                opensync_room: {
+                    roomCode: payload.roomCode,
+                    username: username,
+                    serverUrl: serverUrl,
+                    platform: currentPlatform,
+                    tabSessionId: tabSessionId  // Tab-specific ID to isolate sync
+                }
+            });
+            console.log('[OpenSync] Session saved to browser.storage.local');
         } catch (e) {
             console.warn('[OpenSync] Failed to save session:', e);
         }
@@ -690,9 +785,16 @@
         if (payload.currentUrl && !isSameContent(payload.currentUrl, window.location.href, currentPlatform)) {
             console.log('[OpenSync] Joining from different page, redirecting to video:', payload.currentUrl);
             
-            // Set redirect flags before navigation
-            sessionStorage.setItem('opensync_redirect', 'true');
-            sessionStorage.setItem('opensync_just_switched_url', 'true');
+            // Set redirect flags using browser.storage.local (persists across origins!)
+            try {
+                await browser.storage.local.set({
+                    opensync_redirect: true,
+                    opensync_just_switched_url: true
+                });
+                console.log('[OpenSync] Redirect flags saved');
+            } catch (e) {
+                console.warn('[OpenSync] Failed to save redirect flags:', e);
+            }
             
             // Update tracking
             lastKnownUrl = payload.currentUrl;
@@ -714,7 +816,13 @@
             });
             OpenSyncOverlay.updateRoomInfo(roomCode, participantCount);
             OpenSyncOverlay.updateStatus('Syncing');
-            OpenSyncOverlay.addSystemMessage('Joined the room!');
+            
+            // Only show "Joined" message if not a reconnection after redirect
+            if (!payload.isReconnection) {
+                OpenSyncOverlay.addSystemMessage('Joined the room!');
+            } else {
+                console.log('[OpenSync] Reconnected after navigation - staying synced');
+            }
         }
 
         // Sync URL: If we navigated (changed video), tell room. Else follow room.
@@ -736,7 +844,7 @@
         console.error('[OpenSync] Room error:', payload.message);
 
         // If room invalid, clear session
-        sessionStorage.removeItem('opensync_room');
+        browser.storage.local.remove(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url', 'opensync_sync_time']).catch(() => {});
 
         if (isMainFrame) {
             OpenSyncOverlay.addSystemMessage('Error: ' + payload.message);
@@ -745,6 +853,18 @@
 
     // Remote video control handlers
     function handleRemoteVideoControl(type, payload) {
+        // Ignore remote commands if a redirect is pending - we're about to change pages
+        if (isPendingRedirect) {
+            console.log(`[OpenSync] Ignoring remote ${type} (redirect pending to ${pendingRedirectUrl})`);
+            return;
+        }
+        
+        // Ignore remote commands if waiting for all users to be ready
+        if (isWaitingForAllReady) {
+            console.log(`[OpenSync] Ignoring remote ${type} (waiting for all users to load)`);
+            return;
+        }
+        
         // Ignore remote commands if user is actively interacting
         if (Date.now() - lastLocalActionTime < IGNORE_INCOMING_MS) {
             console.log(`[OpenSync] Ignoring remote ${type} (recent local action)`);
@@ -844,6 +964,18 @@
     }
 
     function handleRemoteSync(payload) {
+        // Ignore sync updates if a redirect is pending
+        if (isPendingRedirect) {
+            console.log('[OpenSync] Ignoring sync (redirect pending)');
+            return;
+        }
+        
+        // Ignore sync updates if waiting for all users to be ready
+        if (isWaitingForAllReady) {
+            console.log('[OpenSync] Ignoring sync (waiting for all users to load)');
+            return;
+        }
+        
         // Ignore sync updates if user is actively interacting
         if (Date.now() - lastLocalActionTime < IGNORE_INCOMING_MS) {
             return;
@@ -1116,12 +1248,8 @@
         roomCode = null;
         participantCount = 1;
 
-        // Clear session storage to prevent auto-reconnect
-        try {
-            sessionStorage.removeItem('opensync_room');
-            sessionStorage.removeItem('opensync_redirect');
-            sessionStorage.removeItem('opensync_just_switched_url');
-        } catch (e) { }
+        // Clear browser.storage.local to prevent auto-reconnect
+        browser.storage.local.remove(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url', 'opensync_sync_time']).catch(() => {});
 
         sendResponse({ success: true });
     }
@@ -1183,6 +1311,68 @@
                 }
             }, 500);
         }, 200);
+    }
+
+    // Handle ALL_READY - all users have loaded, time to sync and play
+    function handleAllReady(payload) {
+        console.log('[OpenSync] All users ready! Syncing to', payload.currentTime, 'seconds');
+        
+        isWaitingForAllReady = false;
+        
+        if (isMainFrame) {
+            OpenSyncOverlay.addSystemMessage('All users ready - playing!');
+            OpenSyncOverlay.updateStatus('Syncing');
+        }
+        
+        const syncTime = payload.currentTime || 0;
+        
+        // Global Mode: Relay to iframe
+        if (isGlobalMode && iframeVideoSource && !OpenSyncVideoController.isAvailable()) {
+            sendCommandToIframe('SEEK', { currentTime: syncTime, isPlaying: true });
+            setTimeout(() => {
+                sendCommandToIframe('PLAY', { currentTime: syncTime });
+                lastPlayingState = true;
+                lastLocalActionTime = 0;
+            }, 300);
+            return;
+        }
+        
+        // Sync and play
+        const videoController = OpenSyncVideoController;
+        
+        // Seek to sync time
+        videoController.seek(syncTime);
+        
+        // Play after seek settles
+        setTimeout(() => {
+            videoController.play();
+            lastPlayingState = true;
+            lastLocalActionTime = 0; // Allow remote commands
+        }, 300);
+    }
+
+    // Handle WAITING_FOR_OTHERS - show loading status
+    function handleWaitingForOthers(payload) {
+        console.log(`[OpenSync] Waiting for others: ${payload.ready}/${payload.total} ready`);
+        
+        if (isMainFrame) {
+            OpenSyncOverlay.updateStatus(`Loading (${payload.ready}/${payload.total})`);
+            if (payload.ready < payload.total) {
+                OpenSyncOverlay.addSystemMessage(`Waiting for others to load... (${payload.ready}/${payload.total})`);
+            }
+        }
+    }
+
+    // Send VIDEO_READY signal when our video is ready to play
+    function sendVideoReadySignal() {
+        if (!isConnected) return;
+        
+        console.log('[OpenSync] Sending VIDEO_READY signal');
+        OpenSyncWebSocketClient.sendVideoReady();
+        
+        if (isMainFrame) {
+            OpenSyncOverlay.addSystemMessage('Video loaded, waiting for others...');
+        }
     }
 
     // Auto-play after redirect for streaming platforms
@@ -1370,10 +1560,23 @@
         return false;
     }
 
-    // URL Sync Logic
+    // URL Sync Logic - track redirect state locally to avoid async check every second
+    let isInRedirectMode = false;
+    
+    // Initialize redirect mode from storage on load
+    browser.storage.local.get('opensync_redirect').then(result => {
+        isInRedirectMode = !!result.opensync_redirect;
+        // Clear flag after a delay
+        if (isInRedirectMode) {
+            setTimeout(() => {
+                isInRedirectMode = false;
+            }, 5000);
+        }
+    }).catch(() => {});
+    
     function checkUrl() {
-        // Skip if we just received a redirect (prevent echo)
-        if (sessionStorage.getItem('opensync_redirect')) {
+        // Skip if we're in redirect mode or pending redirect (prevent echo/loops)
+        if (isInRedirectMode || isPendingRedirect) {
             return;
         }
 
@@ -1400,8 +1603,36 @@
 
         // Content changed - broadcast to room
         if (isConnected && currentContentId) {
-            console.log('[OpenSync] Content changed to:', currentContentId, '- broadcasting URL:', currentUrl);
-            OpenSyncWebSocketClient.sendUrlChange(currentUrl);
+            // Get current video time before pausing (this is where we want everyone to sync)
+            const state = OpenSyncVideoController.getState();
+            const currentTime = state?.currentTime || 0;
+            
+            // Set flag to prevent video events from being broadcast during transition
+            isNavigatingAway = true;
+            isWaitingForAllReady = true; // We're now waiting for all users to load
+            pendingSyncTime = currentTime;
+            
+            console.log('[OpenSync] Content changed to:', currentContentId);
+            console.log('[OpenSync] Pausing video at', currentTime, 's and waiting for all users');
+            
+            // PAUSE the video - we'll resume when all users are ready
+            OpenSyncVideoController.pause();
+            
+            // Broadcast URL change with current time so others know where to sync
+            OpenSyncWebSocketClient.sendUrlChange(currentUrl, currentTime);
+            
+            if (isMainFrame) {
+                OpenSyncOverlay.addSystemMessage('Video changed - waiting for others to load...');
+                OpenSyncOverlay.updateStatus('Loading...');
+            }
+            
+            // After video loads on new content, send VIDEO_READY
+            // Use a delay to allow the new video to initialize
+            setTimeout(() => {
+                isNavigatingAway = false;
+                console.log('[OpenSync] Video transition complete, sending ready signal');
+                sendVideoReadySignal();
+            }, 2000); // 2 second delay for SPA video transition
         }
     }
 
@@ -1415,6 +1646,12 @@
             console.log('[OpenSync] Already on same content, ignoring URL change');
             return;
         }
+        
+        // Check if this is the same URL we're already redirecting to (prevent loop)
+        if (isPendingRedirect && pendingRedirectUrl === payload.url) {
+            console.log('[OpenSync] Already redirecting to this URL, ignoring duplicate');
+            return;
+        }
 
         try {
             const newUrl = new URL(payload.url);
@@ -1426,18 +1663,51 @@
             const isSamePlatform = isSamePlatformDomain(newUrl.hostname, currentUrl.hostname);
 
             if (isSameOrigin || isSamePlatform) {
-                // Safe to auto-redirect - set flags to prevent echo
-                console.log(`[OpenSync] Auto-redirecting to: ${payload.url}`);
+                // IMMEDIATELY set ALL blocking flags to stop video command processing
+                isPendingRedirect = true;
+                isNavigatingAway = true; // Also set this to block outgoing events
+                isWaitingForAllReady = true; // We'll wait for ALL_READY after loading
+                pendingRedirectUrl = payload.url;
+                pendingSyncTime = payload.syncTime || 0; // Store sync time from URL changer
                 
-                // Set redirect flag BEFORE navigating to prevent the new page from broadcasting back
-                sessionStorage.setItem('opensync_redirect', 'true');
-                sessionStorage.setItem('opensync_just_switched_url', 'true');
+                console.log(`[OpenSync] Auto-redirecting to: ${payload.url} (sync time: ${pendingSyncTime}s)`);
                 
-                // Update our tracking to match the new URL to prevent double-broadcast
+                // Pause current video before redirecting
+                try {
+                    OpenSyncVideoController.pause();
+                } catch (e) {}
+                
+                if (isMainFrame) {
+                    OpenSyncOverlay.addSystemMessage('Loading new video...');
+                    OpenSyncOverlay.updateStatus('Loading...');
+                }
+                
+                // Update our tracking IMMEDIATELY to prevent any URL_CHANGE echo
                 lastKnownUrl = payload.url;
                 lastKnownContentId = getContentIdFromUrl(payload.url, currentPlatform);
                 
-                window.location.href = payload.url;
+                // Set redirect flags using browser.storage.local (persists across origins!)
+                // Also store the sync time so we know where to seek after redirect
+                browser.storage.local.set({
+                    opensync_redirect: true,
+                    opensync_just_switched_url: true,
+                    opensync_sync_time: pendingSyncTime // Store sync time for after redirect
+                }).then(() => {
+                    // Disconnect WebSocket BEFORE redirecting to prevent any race conditions
+                    // The new page will reconnect
+                    try {
+                        OpenSyncWebSocketClient.disconnect();
+                    } catch (e) {}
+                    
+                    window.location.href = payload.url;
+                }).catch(e => {
+                    console.error('[OpenSync] Failed to save redirect flags:', e);
+                    // Still redirect even if flag save failed
+                    try {
+                        OpenSyncWebSocketClient.disconnect();
+                    } catch (e2) {}
+                    window.location.href = payload.url;
+                });
                 return;
             }
 
