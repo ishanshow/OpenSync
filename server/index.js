@@ -595,6 +595,15 @@ function handleUrlChange(clientData, payload) {
     const room = rooms.get(roomCode);
     if (!room) return;
 
+    // Check if this is just setting the initial room URL (no other clients to notify)
+    const isInitialUrlSet = !room.currentUrl || room.clients.size <= 1;
+    
+    // Check if URL actually changed
+    if (room.currentUrl === payload.url) {
+        console.log(`[OpenSync Server] URL unchanged, ignoring`);
+        return;
+    }
+
     console.log(`[OpenSync Server] URL changed to ${payload.url} by ${username}`);
     
     // Mark client as navigating - their video events should be ignored temporarily
@@ -608,24 +617,42 @@ function handleUrlChange(clientData, payload) {
     
     room.currentUrl = payload.url;
     
-    // Mark ALL clients as NOT ready - they need to load the new video
+    // Mark OTHER clients as NOT ready - they need to load the new video
+    // The client who sent the URL_CHANGE is already on the correct page
     // This triggers the "wait for all ready" sync mechanism
     room.clients.forEach((client) => {
-        client.isReady = false;
+        if (client.ws !== ws) {
+            client.isReady = false;
+        } else {
+            // The sender is already ready (they're on the page)
+            client.isReady = true;
+        }
     });
     
-    // Store the sync time from the URL changer (they know where they are in the video)
-    room.pendingSyncTime = payload.currentTime || 0;
-    room.pendingSyncUser = username;
-    
-    console.log(`[OpenSync Server] All clients marked not ready, pending sync at ${room.pendingSyncTime}s`);
+    // Only store sync time and broadcast if there are other clients to notify
+    // For initial URL set, we don't need pendingSyncTime - use videoState instead
+    if (!isInitialUrlSet) {
+        // Store the sync time from the URL changer (they know where they are in the video)
+        room.pendingSyncTime = payload.currentTime || 0;
+        room.pendingSyncUser = username;
+        
+        console.log(`[OpenSync Server] Broadcasting URL change, pending sync at ${room.pendingSyncTime}s`);
 
-    // Broadcast to all other clients (they need to redirect/load)
-    broadcastToRoom(roomCode, 'URL_CHANGE', {
-        url: payload.url,
-        username: username,
-        syncTime: room.pendingSyncTime // Include sync time so they know where to seek
-    }, ws);
+        // Broadcast to all other clients (they need to redirect/load)
+        broadcastToRoom(roomCode, 'URL_CHANGE', {
+            url: payload.url,
+            username: username,
+            syncTime: room.pendingSyncTime // Include sync time so they know where to seek
+        }, ws);
+    } else {
+        console.log(`[OpenSync Server] Initial URL set for room at ${payload.currentTime}s, no broadcast needed`);
+        // For initial set, update videoState directly so joining users get the right time
+        room.videoState = {
+            currentTime: payload.currentTime || 0,
+            isPlaying: false,
+            lastUpdated: Date.now()
+        };
+    }
 }
 
 // Handle client reporting video is ready to play
@@ -661,7 +688,34 @@ function handleVideoReady(clientData, payload) {
     
     if (allReady && totalCount > 0) {
         // All clients are ready! Send ALL_READY to sync and play
-        const syncTime = room.pendingSyncTime || 0;
+        // Use pendingSyncTime if set (from URL change), otherwise use current videoState
+        let syncTime = room.pendingSyncTime ?? room.videoState?.currentTime;
+        
+        // If we still don't have a sync time and host is available, request their state first
+        if (syncTime === undefined || syncTime === null) {
+            if (room.host && room.host.readyState === WebSocket.OPEN) {
+                console.log(`[OpenSync Server] No sync time available, requesting state from host before ALL_READY`);
+                sendToClient(room.host, 'SYNC_REQUEST', {
+                    requestedBy: 'server',
+                    urgent: true
+                });
+                // Give host 2 seconds to respond, then send ALL_READY anyway
+                setTimeout(() => {
+                    const finalSyncTime = room.pendingSyncTime ?? room.videoState?.currentTime ?? 0;
+                    console.log(`[OpenSync Server] Broadcasting ALL_READY at ${finalSyncTime}s (after host request)`);
+                    room.clients.forEach((client) => {
+                        sendToClient(client.ws, 'ALL_READY', {
+                            currentTime: finalSyncTime,
+                            participants: totalCount
+                        });
+                    });
+                    room.pendingSyncTime = null;
+                    room.pendingSyncUser = null;
+                }, 2000);
+                return; // Exit early, ALL_READY will be sent after timeout
+            }
+            syncTime = 0; // Fallback if no host
+        }
         
         console.log(`[OpenSync Server] All ${totalCount} clients ready! Broadcasting ALL_READY at ${syncTime}s`);
         
