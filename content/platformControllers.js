@@ -32,68 +32,154 @@ const OpenSyncPlatformControllers = (function () {
             init: () => {
                 injectInlineScript(`
                     // OpenSync Netflix Player Bridge (Inline)
-                    try {
-                        console.log('[OpenSync Bridge] Initializing Netflix Player Bridge...');
-                        function getNetflixPlayer() {
-                            try {
-                                const videoPlayer = window.netflix?.appContext?.state?.playerApp?.getAPI()?.videoPlayer;
-                                const sessionId = videoPlayer?.getAllPlayerSessionIds()[0];
-                                return videoPlayer?.getVideoPlayerBySessionId(sessionId);
-                            } catch (e) { return null; }
-                        }
+                    // Guard against multiple injections
+                    if (window.__OPENSYNC_NETFLIX_BRIDGE_LOADED__) {
+                        console.log('[OpenSync Bridge] Netflix bridge already loaded, skipping');
+                    } else {
+                        window.__OPENSYNC_NETFLIX_BRIDGE_LOADED__ = true;
                         
-                        function clickPlayButton() {
-                            // Try to click the play button if API fails
-                            const selectors = [
-                                '[data-uia="player-big-play-button"]',
-                                '.PlayerControlsNeo__button--play',
-                                'button[aria-label="Play"]'
-                            ];
-                            for (const sel of selectors) {
-                                const btn = document.querySelector(sel);
-                                if (btn) {
-                                    console.log('[OpenSync Bridge] Clicking play button:', sel);
-                                    btn.click();
-                                    return true;
-                                }
-                            }
-                            return false;
-                        }
-                        
-                        window.addEventListener('message', function(event) {
-                            if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
-                            const player = getNetflixPlayer();
+                        try {
+                            console.log('[OpenSync Bridge] Initializing Netflix Player Bridge...');
                             
-                            const { type, payload } = event.data;
-                            try {
-                                switch (type) {
-                                    case 'SEEK': 
-                                        if (player) player.seek(payload.time * 1000);
-                                        break;
-                                    case 'PLAY': 
-                                        if (player) {
-                                            player.play();
-                                        } else {
-                                            // Fallback: click the play button
-                                            clickPlayButton();
-                                        }
-                                        // Also try clicking in case API doesn't work due to autoplay policy
-                                        setTimeout(() => {
-                                            const video = document.querySelector('video');
-                                            if (video && video.paused) {
-                                                clickPlayButton();
-                                            }
-                                        }, 500);
-                                        break;
-                                    case 'PAUSE': 
-                                        if (player) player.pause();
-                                        break;
+                            // Track remote actions to avoid echo
+                            let isRemoteAction = false;
+                            let remoteActionTimer = null;
+                            const REMOTE_ACTION_WINDOW = 1500;
+                            
+                            function setRemoteAction() {
+                                isRemoteAction = true;
+                                if (remoteActionTimer) clearTimeout(remoteActionTimer);
+                                remoteActionTimer = setTimeout(() => {
+                                    isRemoteAction = false;
+                                }, REMOTE_ACTION_WINDOW);
+                            }
+                            
+                            // Get Netflix player API - MUST use this for commands to avoid DRM issues
+                            function getNetflixPlayer() {
+                                try {
+                                    const videoPlayer = window.netflix?.appContext?.state?.playerApp?.getAPI()?.videoPlayer;
+                                    const sessionId = videoPlayer?.getAllPlayerSessionIds()[0];
+                                    return videoPlayer?.getVideoPlayerBySessionId(sessionId);
+                                } catch (e) { return null; }
+                            }
+                            
+                            // Forward local video events to content script
+                            function forwardVideoEvent(eventType, video) {
+                                if (isRemoteAction) {
+                                    console.log('[OpenSync Bridge] Ignoring ' + eventType + ' (remote action)');
+                                    return;
                                 }
-                            } catch (e) { console.error('[OpenSync Bridge] Error:', e); }
-                        });
-                        console.log('[OpenSync Bridge] Ready');
-                        window.postMessage({ source: 'OPENSYNC_BRIDGE', type: 'READY' }, '*');
-                    } catch(e) { console.error('[OpenSync Bridge] Init failed:', e); }
+                                
+                                if (!video) return;
+                                
+                                const currentTime = video.currentTime;
+                                const paused = video.paused;
+                                const duration = video.duration;
+                                
+                                console.log('[OpenSync Bridge] Forwarding ' + eventType + ' at ' + currentTime?.toFixed(2) + 's');
+                                
+                                window.postMessage({
+                                    source: 'OPENSYNC_BRIDGE',
+                                    type: 'VIDEO_EVENT',
+                                    event: eventType,
+                                    payload: {
+                                        currentTime: currentTime,
+                                        duration: duration,
+                                        paused: paused,
+                                        isPlaying: !paused
+                                    }
+                                }, '*');
+                            }
+                            
+                            // Set up event listeners on video element for detecting local user actions
+                            let attachedVideo = null;
+                            
+                            function attachVideoListeners() {
+                                const video = document.querySelector('video');
+                                if (!video || video === attachedVideo) return;
+                                
+                                if (attachedVideo) {
+                                    try {
+                                        attachedVideo.removeEventListener('play', onVideoPlay);
+                                        attachedVideo.removeEventListener('pause', onVideoPause);
+                                        attachedVideo.removeEventListener('seeked', onVideoSeeked);
+                                    } catch (e) {}
+                                }
+                                
+                                console.log('[OpenSync Bridge] Attaching Netflix video event listeners');
+                                video.addEventListener('play', onVideoPlay);
+                                video.addEventListener('pause', onVideoPause);
+                                video.addEventListener('seeked', onVideoSeeked);
+                                attachedVideo = video;
+                            }
+                            
+                            function onVideoPlay() {
+                                forwardVideoEvent('play', attachedVideo);
+                            }
+                            
+                            function onVideoPause() {
+                                forwardVideoEvent('pause', attachedVideo);
+                            }
+                            
+                            function onVideoSeeked() {
+                                forwardVideoEvent('seek', attachedVideo);
+                            }
+                            
+                            // Attach listeners now and re-check periodically
+                            attachVideoListeners();
+                            setInterval(attachVideoListeners, 2000);
+                            
+                            window.addEventListener('message', function(event) {
+                                if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
+                                
+                                const { type, payload } = event.data;
+                                const player = getNetflixPlayer();
+                                const video = document.querySelector('video');
+                                
+                                try {
+                                    switch (type) {
+                                        case 'SEEK':
+                                            setRemoteAction();
+                                            // Use Netflix API for seek - required to avoid DRM issues
+                                            if (player) {
+                                                player.seek(payload.time * 1000);
+                                            }
+                                            break;
+                                        case 'PLAY':
+                                            setRemoteAction();
+                                            // Use Netflix API for play
+                                            if (player) {
+                                                player.play();
+                                            }
+                                            break;
+                                        case 'PAUSE':
+                                            setRemoteAction();
+                                            // Use Netflix API for pause
+                                            if (player) {
+                                                player.pause();
+                                            }
+                                            break;
+                                        case 'GET_STATE':
+                                            if (video) {
+                                                window.postMessage({
+                                                    source: 'OPENSYNC_BRIDGE',
+                                                    type: 'STATE',
+                                                    payload: {
+                                                        currentTime: video.currentTime,
+                                                        duration: video.duration,
+                                                        paused: video.paused
+                                                    }
+                                                }, '*');
+                                            }
+                                            break;
+                                    }
+                                } catch (e) { console.error('[OpenSync Bridge] Error:', e); }
+                            });
+                            
+                            console.log('[OpenSync Bridge] Netflix Bridge Ready');
+                            window.postMessage({ source: 'OPENSYNC_BRIDGE', type: 'READY', platform: 'netflix' }, '*');
+                        } catch(e) { console.error('[OpenSync Bridge] Init failed:', e); }
+                    }
                 `);
             }
         },
@@ -128,34 +214,45 @@ const OpenSyncPlatformControllers = (function () {
             init: () => {
                 injectInlineScript(`
                     // OpenSync Prime Video Player Bridge (Inline)
+                    // Guard against multiple injections
+                    if (window.__OPENSYNC_PRIMEVIDEO_BRIDGE_LOADED__) {
+                        console.log('[OpenSync Bridge] Prime Video bridge already loaded, skipping');
+                    } else {
+                        window.__OPENSYNC_PRIMEVIDEO_BRIDGE_LOADED__ = true;
+                        
                     try {
                         console.log('[OpenSync Bridge] Initializing Prime Video Player Bridge...');
                         
+                        // Track remote actions to avoid echo
+                        let isRemoteAction = false;
+                        let remoteActionTimer = null;
+                        const REMOTE_ACTION_WINDOW = 2000;
+                        
+                        function setRemoteAction() {
+                            isRemoteAction = true;
+                            if (remoteActionTimer) clearTimeout(remoteActionTimer);
+                            remoteActionTimer = setTimeout(() => {
+                                isRemoteAction = false;
+                            }, REMOTE_ACTION_WINDOW);
+                        }
+                        
                         function getMainVideoElement() {
                             // Find the main content video (not ads/previews)
-                            // Priority: video with longest duration and has been playing
                             const allVideos = document.querySelectorAll('video');
                             let bestVideo = null;
                             let bestScore = 0;
                             
                             for (const v of allVideos) {
-                                // Calculate a score based on:
-                                // - Has a source
-                                // - Duration (longer = more likely to be main content)
-                                // - Size on screen
-                                // - Is visible
                                 let score = 0;
                                 
                                 if (v.src || v.srcObject) score += 10;
-                                if (v.duration > 60) score += 30;  // Likely main content
-                                if (v.duration > 300) score += 20; // Even more likely (5+ mins)
-                                if (v.currentTime > 0) score += 10; // Has been played
+                                if (v.duration > 60) score += 30;
+                                if (v.duration > 300) score += 20;
+                                if (v.currentTime > 0) score += 10;
                                 
                                 const rect = v.getBoundingClientRect();
-                                if (rect.width > 400 && rect.height > 200) score += 20; // Large video
-                                if (rect.width > 800) score += 10; // Very large
-                                
-                                // Check if visible
+                                if (rect.width > 400 && rect.height > 200) score += 20;
+                                if (rect.width > 800) score += 10;
                                 if (rect.top < window.innerHeight && rect.bottom > 0) score += 5;
                                 
                                 if (score > bestScore) {
@@ -164,14 +261,77 @@ const OpenSyncPlatformControllers = (function () {
                                 }
                             }
                             
-                            if (bestVideo) {
-                                console.log('[OpenSync Bridge] Selected video with score', bestScore, 
-                                    'duration:', bestVideo.duration?.toFixed(0), 
-                                    'currentTime:', bestVideo.currentTime?.toFixed(2));
-                            }
-                            
                             return bestVideo || document.querySelector('video');
                         }
+                        
+                        // Forward local video events to content script
+                        function forwardVideoEvent(eventType, video) {
+                            if (isRemoteAction) {
+                                console.log('[OpenSync Bridge] Ignoring ' + eventType + ' (remote action)');
+                                return;
+                            }
+                            
+                            if (!video) return;
+                            
+                            const currentTime = video.currentTime;
+                            const paused = video.paused;
+                            const duration = video.duration;
+                            
+                            console.log('[OpenSync Bridge] Forwarding ' + eventType + ' at ' + currentTime?.toFixed(2) + 's');
+                            
+                            window.postMessage({
+                                source: 'OPENSYNC_BRIDGE',
+                                type: 'VIDEO_EVENT',
+                                event: eventType,
+                                payload: {
+                                    currentTime: currentTime,
+                                    duration: duration,
+                                    paused: paused,
+                                    isPlaying: !paused
+                                }
+                            }, '*');
+                        }
+                        
+                        // Set up event listeners on video elements
+                        let attachedVideos = new Set();
+                        
+                        function attachVideoListeners() {
+                            const allVideos = document.querySelectorAll('video');
+                            
+                            for (const video of allVideos) {
+                                if (attachedVideos.has(video)) continue;
+                                
+                                console.log('[OpenSync Bridge] Attaching Prime Video event listeners');
+                                
+                                video.addEventListener('play', function() {
+                                    forwardVideoEvent('play', this);
+                                });
+                                video.addEventListener('pause', function() {
+                                    forwardVideoEvent('pause', this);
+                                });
+                                video.addEventListener('seeked', function() {
+                                    forwardVideoEvent('seek', this);
+                                });
+                                video.addEventListener('playing', function() {
+                                    forwardVideoEvent('playing', this);
+                                });
+                                
+                                attachedVideos.add(video);
+                            }
+                        }
+                        
+                        // Attach listeners now and re-check periodically
+                        attachVideoListeners();
+                        setInterval(attachVideoListeners, 2000);
+                        
+                        // Watch for dynamically added videos
+                        const observer = new MutationObserver(() => {
+                            attachVideoListeners();
+                        });
+                        observer.observe(document.body || document.documentElement, {
+                            childList: true,
+                            subtree: true
+                        });
                         
                         window.addEventListener('message', function(event) {
                             if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
@@ -187,19 +347,21 @@ const OpenSyncPlatformControllers = (function () {
                             try {
                                 switch (type) {
                                     case 'SEEK':
-                                        console.log('[OpenSync Bridge] Seeking to', payload.time, '(from', video.currentTime.toFixed(2), ')');
+                                        setRemoteAction();
+                                        console.log('[OpenSync Bridge] Seeking to', payload.time);
                                         video.currentTime = payload.time;
                                         break;
                                     case 'PLAY':
-                                        console.log('[OpenSync Bridge] Playing at', video.currentTime.toFixed(2));
+                                        setRemoteAction();
+                                        console.log('[OpenSync Bridge] Playing');
                                         video.play().catch(e => console.warn('[OpenSync Bridge] Play failed:', e));
                                         break;
                                     case 'PAUSE':
-                                        console.log('[OpenSync Bridge] Pausing at', video.currentTime.toFixed(2));
+                                        setRemoteAction();
+                                        console.log('[OpenSync Bridge] Pausing');
                                         video.pause();
                                         break;
                                     case 'GET_STATE':
-                                        // Return current state for sync verification
                                         window.postMessage({
                                             source: 'OPENSYNC_BRIDGE',
                                             type: 'STATE',
@@ -221,6 +383,7 @@ const OpenSyncPlatformControllers = (function () {
                     } catch(e) { 
                         console.error('[OpenSync Bridge] Prime Video Init failed:', e); 
                     }
+                    }
                 `);
             }
         },
@@ -236,6 +399,202 @@ const OpenSyncPlatformControllers = (function () {
             quirks: {
                 waitForReady: true,
                 minDuration: 5 // Skip very short clips/ads if possible
+            }
+        },
+
+        global: {
+            name: 'Global (Any Site)',
+            hostnames: [], // Matches no hostname automatically - must be explicitly selected
+            videoSelectors: [
+                'video[src]',
+                'video'
+            ],
+            useShadowDOM: true,
+            quirks: {
+                waitForReady: true,
+                checkVisibility: true
+            },
+            // Global Bridge Control
+            controls: {
+                play: () => sendBridgeCommand('PLAY'),
+                pause: () => sendBridgeCommand('PAUSE'),
+                seek: (time) => sendBridgeCommand('SEEK', { time })
+            },
+            init: () => {
+                injectInlineScript(`
+                    // OpenSync Global Player Bridge (Inline)
+                    // Guard against multiple injections
+                    if (window.__OPENSYNC_GLOBAL_BRIDGE_LOADED__) {
+                        console.log('[OpenSync Bridge] Global bridge already loaded, skipping');
+                    } else {
+                        window.__OPENSYNC_GLOBAL_BRIDGE_LOADED__ = true;
+                        
+                    // Works on any site by attaching to video elements
+                    try {
+                        console.log('[OpenSync Bridge] Initializing Global Player Bridge...');
+                        
+                        // Track remote actions to avoid echo
+                        let isRemoteAction = false;
+                        let remoteActionTimer = null;
+                        const REMOTE_ACTION_WINDOW = 1500;
+                        
+                        function setRemoteAction() {
+                            isRemoteAction = true;
+                            if (remoteActionTimer) clearTimeout(remoteActionTimer);
+                            remoteActionTimer = setTimeout(() => {
+                                isRemoteAction = false;
+                            }, REMOTE_ACTION_WINDOW);
+                        }
+                        
+                        function getMainVideoElement() {
+                            // Find the main content video
+                            const allVideos = document.querySelectorAll('video');
+                            let bestVideo = null;
+                            let bestScore = 0;
+                            
+                            for (const v of allVideos) {
+                                let score = 0;
+                                
+                                if (v.src || v.srcObject) score += 10;
+                                if (v.duration > 60) score += 30;
+                                if (v.duration > 300) score += 20;
+                                if (v.currentTime > 0) score += 10;
+                                
+                                const rect = v.getBoundingClientRect();
+                                if (rect.width > 400 && rect.height > 200) score += 20;
+                                if (rect.width > 800) score += 10;
+                                if (rect.top < window.innerHeight && rect.bottom > 0) score += 5;
+                                
+                                if (score > bestScore) {
+                                    bestScore = score;
+                                    bestVideo = v;
+                                }
+                            }
+                            
+                            return bestVideo || document.querySelector('video');
+                        }
+                        
+                        // Forward local video events to content script
+                        function forwardVideoEvent(eventType, video) {
+                            if (isRemoteAction) {
+                                console.log('[OpenSync Bridge] Ignoring ' + eventType + ' (remote action)');
+                                return;
+                            }
+                            
+                            if (!video) return;
+                            
+                            const currentTime = video.currentTime;
+                            const paused = video.paused;
+                            const duration = video.duration;
+                            
+                            console.log('[OpenSync Bridge] Forwarding ' + eventType + ' at ' + currentTime?.toFixed(2) + 's');
+                            
+                            window.postMessage({
+                                source: 'OPENSYNC_BRIDGE',
+                                type: 'VIDEO_EVENT',
+                                event: eventType,
+                                payload: {
+                                    currentTime: currentTime,
+                                    duration: duration,
+                                    paused: paused,
+                                    isPlaying: !paused
+                                }
+                            }, '*');
+                        }
+                        
+                        // Set up event listeners on video element
+                        let attachedVideos = new Set();
+                        
+                        function attachVideoListeners() {
+                            const allVideos = document.querySelectorAll('video');
+                            
+                            for (const video of allVideos) {
+                                if (attachedVideos.has(video)) continue;
+                                
+                                console.log('[OpenSync Bridge] Attaching listeners to video element');
+                                
+                                video.addEventListener('play', function() {
+                                    forwardVideoEvent('play', this);
+                                });
+                                video.addEventListener('pause', function() {
+                                    forwardVideoEvent('pause', this);
+                                });
+                                video.addEventListener('seeked', function() {
+                                    forwardVideoEvent('seek', this);
+                                });
+                                video.addEventListener('playing', function() {
+                                    forwardVideoEvent('playing', this);
+                                });
+                                
+                                attachedVideos.add(video);
+                            }
+                        }
+                        
+                        // Attach listeners now and re-check periodically (videos might load later)
+                        attachVideoListeners();
+                        setInterval(attachVideoListeners, 2000);
+                        
+                        // Also watch for dynamically added videos
+                        const observer = new MutationObserver(() => {
+                            attachVideoListeners();
+                        });
+                        observer.observe(document.body || document.documentElement, {
+                            childList: true,
+                            subtree: true
+                        });
+                        
+                        window.addEventListener('message', function(event) {
+                            if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
+                            
+                            const { type, payload } = event.data;
+                            const video = getMainVideoElement();
+                            
+                            if (!video) {
+                                console.warn('[OpenSync Bridge] No video element found');
+                                return;
+                            }
+                            
+                            try {
+                                switch (type) {
+                                    case 'SEEK':
+                                        setRemoteAction();
+                                        console.log('[OpenSync Bridge] Seeking to', payload.time);
+                                        video.currentTime = payload.time;
+                                        break;
+                                    case 'PLAY':
+                                        setRemoteAction();
+                                        console.log('[OpenSync Bridge] Playing');
+                                        video.play().catch(e => console.warn('[OpenSync Bridge] Play failed:', e));
+                                        break;
+                                    case 'PAUSE':
+                                        setRemoteAction();
+                                        console.log('[OpenSync Bridge] Pausing');
+                                        video.pause();
+                                        break;
+                                    case 'GET_STATE':
+                                        window.postMessage({
+                                            source: 'OPENSYNC_BRIDGE',
+                                            type: 'STATE',
+                                            payload: {
+                                                currentTime: video.currentTime,
+                                                duration: video.duration,
+                                                paused: video.paused
+                                            }
+                                        }, '*');
+                                        break;
+                                }
+                            } catch (e) { 
+                                console.error('[OpenSync Bridge] Command error:', e); 
+                            }
+                        });
+                        
+                        console.log('[OpenSync Bridge] Global Bridge Ready');
+                        window.postMessage({ source: 'OPENSYNC_BRIDGE', type: 'READY', platform: 'global' }, '*');
+                    } catch(e) { 
+                        console.error('[OpenSync Bridge] Global Init failed:', e); 
+                    }
+                    }
+                `);
             }
         },
 
@@ -266,8 +625,27 @@ const OpenSyncPlatformControllers = (function () {
             init: () => {
                 injectInlineScript(`
                     // OpenSync Hotstar Player Bridge (Inline)
+                    // Guard against multiple injections
+                    if (window.__OPENSYNC_HOTSTAR_BRIDGE_LOADED__) {
+                        console.log('[OpenSync Bridge] Hotstar bridge already loaded, skipping');
+                    } else {
+                        window.__OPENSYNC_HOTSTAR_BRIDGE_LOADED__ = true;
+                        
                     try {
                         console.log('[OpenSync Bridge] Initializing Hotstar Player Bridge...');
+                        
+                        // Track remote actions to avoid echo
+                        let isRemoteAction = false;
+                        let remoteActionTimer = null;
+                        const REMOTE_ACTION_WINDOW = 2000;
+                        
+                        function setRemoteAction() {
+                            isRemoteAction = true;
+                            if (remoteActionTimer) clearTimeout(remoteActionTimer);
+                            remoteActionTimer = setTimeout(() => {
+                                isRemoteAction = false;
+                            }, REMOTE_ACTION_WINDOW);
+                        }
                         
                         function getMainVideoElement() {
                             // Find the main content video (not ads/previews)
@@ -316,6 +694,106 @@ const OpenSyncPlatformControllers = (function () {
                             return null;
                         }
                         
+                        // Forward local video events to content script
+                        function forwardVideoEvent(eventType, video, bitmovinPlayer) {
+                            if (isRemoteAction) {
+                                console.log('[OpenSync Bridge] Ignoring ' + eventType + ' (remote action)');
+                                return;
+                            }
+                            
+                            let currentTime, paused, duration;
+                            if (bitmovinPlayer) {
+                                try {
+                                    currentTime = bitmovinPlayer.getCurrentTime();
+                                    paused = bitmovinPlayer.isPaused();
+                                    duration = bitmovinPlayer.getDuration();
+                                } catch (e) {
+                                    if (video) {
+                                        currentTime = video.currentTime;
+                                        paused = video.paused;
+                                        duration = video.duration;
+                                    }
+                                }
+                            } else if (video) {
+                                currentTime = video.currentTime;
+                                paused = video.paused;
+                                duration = video.duration;
+                            }
+                            
+                            console.log('[OpenSync Bridge] Forwarding ' + eventType + ' at ' + currentTime?.toFixed(2) + 's');
+                            
+                            window.postMessage({
+                                source: 'OPENSYNC_BRIDGE',
+                                type: 'VIDEO_EVENT',
+                                event: eventType,
+                                payload: {
+                                    currentTime: currentTime,
+                                    duration: duration,
+                                    paused: paused,
+                                    isPlaying: !paused
+                                }
+                            }, '*');
+                        }
+                        
+                        // Set up event listeners on video element
+                        let attachedVideo = null;
+                        let bitmovinEventsAttached = false;
+                        
+                        function attachVideoListeners() {
+                            const video = getMainVideoElement();
+                            const bitmovinPlayer = getBitmovinPlayer();
+                            
+                            // Attach Bitmovin player event listeners if available
+                            if (bitmovinPlayer && !bitmovinEventsAttached) {
+                                console.log('[OpenSync Bridge] Attaching Bitmovin player event listeners');
+                                try {
+                                    // Bitmovin player events
+                                    bitmovinPlayer.on('play', () => forwardVideoEvent('play', video, bitmovinPlayer));
+                                    bitmovinPlayer.on('paused', () => forwardVideoEvent('pause', video, bitmovinPlayer));
+                                    bitmovinPlayer.on('seeked', () => forwardVideoEvent('seek', video, bitmovinPlayer));
+                                    bitmovinPlayer.on('playing', () => forwardVideoEvent('playing', video, bitmovinPlayer));
+                                    bitmovinEventsAttached = true;
+                                    console.log('[OpenSync Bridge] Bitmovin events attached successfully');
+                                } catch (e) {
+                                    console.warn('[OpenSync Bridge] Failed to attach Bitmovin events:', e);
+                                }
+                            }
+                            
+                            // Also attach to video element as fallback
+                            if (video && video !== attachedVideo) {
+                                if (attachedVideo) {
+                                    // Remove old listeners
+                                    try {
+                                        attachedVideo.removeEventListener('play', onVideoPlay);
+                                        attachedVideo.removeEventListener('pause', onVideoPause);
+                                        attachedVideo.removeEventListener('seeked', onVideoSeeked);
+                                    } catch (e) {}
+                                }
+                                
+                                console.log('[OpenSync Bridge] Attaching video element event listeners');
+                                video.addEventListener('play', onVideoPlay);
+                                video.addEventListener('pause', onVideoPause);
+                                video.addEventListener('seeked', onVideoSeeked);
+                                attachedVideo = video;
+                            }
+                        }
+                        
+                        function onVideoPlay() {
+                            forwardVideoEvent('play', attachedVideo, getBitmovinPlayer());
+                        }
+                        
+                        function onVideoPause() {
+                            forwardVideoEvent('pause', attachedVideo, getBitmovinPlayer());
+                        }
+                        
+                        function onVideoSeeked() {
+                            forwardVideoEvent('seek', attachedVideo, getBitmovinPlayer());
+                        }
+                        
+                        // Attach listeners now and re-check periodically (video might load later)
+                        attachVideoListeners();
+                        setInterval(attachVideoListeners, 2000);
+                        
                         window.addEventListener('message', function(event) {
                             if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
                             
@@ -331,6 +809,7 @@ const OpenSyncPlatformControllers = (function () {
                             try {
                                 switch (type) {
                                     case 'SEEK':
+                                        setRemoteAction();
                                         console.log('[OpenSync Bridge] Seeking to', payload.time, '(from', video?.currentTime?.toFixed(2), ')');
                                         if (bitmovinPlayer) {
                                             bitmovinPlayer.seek(payload.time);
@@ -339,6 +818,7 @@ const OpenSyncPlatformControllers = (function () {
                                         }
                                         break;
                                     case 'PLAY':
+                                        setRemoteAction();
                                         console.log('[OpenSync Bridge] Playing at', video?.currentTime?.toFixed(2));
                                         if (bitmovinPlayer) {
                                             bitmovinPlayer.play();
@@ -347,6 +827,7 @@ const OpenSyncPlatformControllers = (function () {
                                         }
                                         break;
                                     case 'PAUSE':
+                                        setRemoteAction();
                                         console.log('[OpenSync Bridge] Pausing at', video?.currentTime?.toFixed(2));
                                         if (bitmovinPlayer) {
                                             bitmovinPlayer.pause();
@@ -382,6 +863,7 @@ const OpenSyncPlatformControllers = (function () {
                         window.postMessage({ source: 'OPENSYNC_BRIDGE', type: 'READY', platform: 'hotstar' }, '*');
                     } catch(e) { 
                         console.error('[OpenSync Bridge] Hotstar Init failed:', e); 
+                    }
                     }
                 `);
             }

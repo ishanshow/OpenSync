@@ -82,6 +82,56 @@
         console.log('[OpenSync] Main frame: listening for iframe video messages');
     }
 
+    // ============================================
+    // BRIDGE MODE: Listen for events from platform bridges (Hotstar, etc.)
+    // ============================================
+    
+    // Listen for video events forwarded from platform bridges
+    window.addEventListener('message', handleBridgeMessage);
+    
+    function handleBridgeMessage(event) {
+        // Only process messages from the page-level bridge
+        if (event.data?.source !== 'OPENSYNC_BRIDGE') return;
+        if (event.data.type !== 'VIDEO_EVENT') return;
+        
+        const { event: videoEvent, payload } = event.data;
+        
+        if (!isConnected || !payload) return;
+        
+        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
+        if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
+            console.log('[OpenSync] Skipping bridge event broadcast (navigation/loading in progress)');
+            return;
+        }
+        
+        console.log('[OpenSync] Bridge VIDEO_EVENT:', videoEvent, 'at', payload.currentTime?.toFixed(2));
+        
+        lastLocalActionTime = Date.now();
+        
+        switch (videoEvent) {
+            case 'play':
+            case 'playing':
+                if (lastPlayingState === true) return;
+                lastPlayingState = true;
+                console.log('[OpenSync] Bridge PLAY at', payload.currentTime?.toFixed(2));
+                OpenSyncWebSocketClient.sendPlay(payload.currentTime);
+                break;
+                
+            case 'pause':
+                if (lastPlayingState === false) return;
+                lastPlayingState = false;
+                console.log('[OpenSync] Bridge PAUSE at', payload.currentTime?.toFixed(2));
+                OpenSyncWebSocketClient.sendPause(payload.currentTime);
+                break;
+                
+            case 'seek':
+                const effectiveIsPlaying = payload.isPlaying || (lastPlayingState === true);
+                console.log('[OpenSync] Bridge SEEK to', payload.currentTime?.toFixed(2), 'isPlaying:', effectiveIsPlaying);
+                OpenSyncWebSocketClient.sendSeek(payload.currentTime, effectiveIsPlaying);
+                break;
+        }
+    }
+
     function handleIframeMessage(event) {
         // Only process messages from child frames with our protocol
         if (event.data?.source !== 'OPENSYNC_IFRAME') return;
@@ -377,9 +427,16 @@
                         serverUrl = data.serverUrl || serverUrl;
                         username = data.username || username;
                         
-                        // Set platform from stored data
+                        // Set platform from stored data and initialize bridge
                         if (data.platform) {
                             currentPlatform = data.platform;
+                            OpenSyncVideoController.setPlatform(currentPlatform);
+                            
+                            // Set Global Mode flag if platform is 'global'
+                            if (currentPlatform === 'global') {
+                                isGlobalMode = true;
+                                console.log('[OpenSync] Global Mode enabled from stored session');
+                            }
                         }
 
                         const connected = await connectToServer(serverUrl);
@@ -653,9 +710,23 @@
             console.warn('[OpenSync] Failed to save session:', e);
         }
 
-        // Send current URL to server so joining users can be redirected
+        // Send current URL and video time to server so joining users can be redirected and synced
         if (isConnected) {
-            OpenSyncWebSocketClient.sendUrlChange(window.location.href);
+            // Get current video time to include with URL
+            const state = OpenSyncVideoController.getState();
+            const currentTime = state?.currentTime || 0;
+            
+            console.log('[OpenSync] Sending initial URL with time:', currentTime.toFixed(2));
+            OpenSyncWebSocketClient.sendUrlChange(window.location.href, currentTime);
+            
+            // Also send video state for sync
+            if (state) {
+                OpenSyncWebSocketClient.sendSync({
+                    currentTime: state.currentTime,
+                    isPlaying: state.isPlaying,
+                    playbackRate: state.playbackRate || 1
+                });
+            }
         }
 
         // Only create overlay in main frame
@@ -758,6 +829,15 @@
         if (payload.platform && !currentPlatform) {
             currentPlatform = payload.platform;
             console.log('[OpenSync] Platform set from room:', currentPlatform);
+            
+            // Initialize the bridge for this platform
+            OpenSyncVideoController.setPlatform(currentPlatform);
+            
+            // Set Global Mode flag if platform is 'global'
+            if (currentPlatform === 'global') {
+                isGlobalMode = true;
+                console.log('[OpenSync] Global Mode enabled from room platform');
+            }
         }
 
         console.log('[OpenSync] Joined room:', roomCode);
@@ -780,6 +860,13 @@
             console.warn('[OpenSync] Failed to save session:', e);
         }
 
+        // Update content tracking to match room's URL (prevents checkUrl from detecting false changes)
+        if (payload.currentUrl) {
+            lastKnownUrl = window.location.href;
+            lastKnownContentId = getContentIdFromUrl(window.location.href, currentPlatform);
+            console.log('[OpenSync] Updated content tracking:', lastKnownContentId);
+        }
+        
         // Check if we need to redirect to the video URL
         // This enables joining from any tab
         if (payload.currentUrl && !isSameContent(payload.currentUrl, window.location.href, currentPlatform)) {
@@ -796,7 +883,7 @@
                 console.warn('[OpenSync] Failed to save redirect flags:', e);
             }
             
-            // Update tracking
+            // Update tracking for the redirect target
             lastKnownUrl = payload.currentUrl;
             lastKnownContentId = getContentIdFromUrl(payload.currentUrl, currentPlatform);
             
@@ -1125,6 +1212,8 @@
                 isGlobalMode = true;
                 currentPlatform = 'global';
                 console.log('[OpenSync] Creating room in Global Mode');
+                // Initialize global bridge for event capture
+                OpenSyncVideoController.setPlatform(currentPlatform);
             } else if (message.platform) {
                 // Set platform if provided
                 currentPlatform = message.platform;
@@ -1145,8 +1234,8 @@
                 init();
             }
 
-            // Re-detect video with platform (skip for Global Mode - will use iframe detection)
-            if (currentPlatform && currentPlatform !== 'global') {
+            // Re-detect video with platform (including Global Mode for bridge initialization)
+            if (currentPlatform) {
                 OpenSyncVideoController.redetect(currentPlatform);
             }
 
@@ -1562,21 +1651,62 @@
 
     // URL Sync Logic - track redirect state locally to avoid async check every second
     let isInRedirectMode = false;
+    let checkUrlInitialized = false;
     
     // Initialize redirect mode from storage on load
     browser.storage.local.get('opensync_redirect').then(result => {
         isInRedirectMode = !!result.opensync_redirect;
         // Clear flag after a delay
         if (isInRedirectMode) {
+            console.log('[OpenSync] Redirect mode detected, suppressing URL checks for 5s');
             setTimeout(() => {
                 isInRedirectMode = false;
+                console.log('[OpenSync] Redirect mode ended');
             }, 5000);
         }
-    }).catch(() => {});
+        // Mark as initialized so checkUrl can run
+        checkUrlInitialized = true;
+    }).catch(() => {
+        checkUrlInitialized = true;
+    });
+    
+    // Safety timeout: clear isWaitingForAllReady if it stays true too long
+    // This prevents the client from being stuck if ALL_READY is never received
+    let waitingForReadyStartTime = null;
+    const MAX_WAITING_TIME = 30000; // 30 seconds max
+    
+    setInterval(() => {
+        if (isWaitingForAllReady) {
+            if (!waitingForReadyStartTime) {
+                waitingForReadyStartTime = Date.now();
+            } else if (Date.now() - waitingForReadyStartTime > MAX_WAITING_TIME) {
+                console.log('[OpenSync] Safety timeout: clearing isWaitingForAllReady after', MAX_WAITING_TIME/1000, 'seconds');
+                isWaitingForAllReady = false;
+                isNavigatingAway = false;
+                waitingForReadyStartTime = null;
+                if (isMainFrame) {
+                    OpenSyncOverlay.updateStatus('Syncing');
+                    OpenSyncOverlay.addSystemMessage('Sync ready (timeout fallback)');
+                }
+            }
+        } else {
+            waitingForReadyStartTime = null;
+        }
+    }, 5000);
     
     function checkUrl() {
+        // Skip if redirect mode check hasn't completed yet
+        if (!checkUrlInitialized) {
+            return;
+        }
+        
         // Skip if we're in redirect mode or pending redirect (prevent echo/loops)
         if (isInRedirectMode || isPendingRedirect) {
+            return;
+        }
+        
+        // Skip if we're waiting for all users to be ready (we just arrived via redirect)
+        if (isWaitingForAllReady) {
             return;
         }
 
