@@ -3,7 +3,7 @@
 
 const OpenSyncWebSocketClient = (function () {
     let ws = null;
-    let serverUrl = 'ws://localhost:3000';
+    let serverUrl = (typeof OpenSyncProtocol !== 'undefined' && OpenSyncProtocol.DEFAULT_SERVER_URL) || 'ws://localhost:3000';
     let roomCode = null;
     let username = 'User';
     let isConnected = false;
@@ -331,6 +331,7 @@ const OpenSyncWebSocketClient = (function () {
         sendPlay,
         sendPause,
         sendSeek,
+        sendBuffer,
         sendChat,
         sendUrlChange,
         sendVideoReady,

@@ -33,7 +33,7 @@
     let isHost = false;
     let roomCode = null;
     let username = 'User_' + Math.random().toString(36).substring(2, 6);
-    let serverUrl = 'ws://localhost:3000';
+    let serverUrl = OpenSyncProtocol.DEFAULT_SERVER_URL;
     let participantCount = 1;
     let currentPlatform = null; // Platform type: 'netflix', 'primevideo', 'hotstar'
 
@@ -1843,9 +1843,13 @@
 
             // Different platform/origin - need to open in new tab or show prompt
             if (isMainFrame) {
+                if (!['http:', 'https:'].includes(newUrl.protocol)) {
+                    console.warn('[OpenSync] Refusing to display link with unsafe protocol:', newUrl.protocol);
+                    return;
+                }
                 const platformName = getPlatformDisplayName(newUrl.hostname);
                 OpenSyncOverlay.addSystemMessage(
-                    `Video changed to ${platformName}. <a href="${payload.url}" target="_blank" style="color: #4CAF50; text-decoration: underline;">Open in New Tab</a>`
+                    `Video changed to ${platformName}. <a href="${newUrl.href}" target="_blank" style="color: #4CAF50; text-decoration: underline;">Open in New Tab</a>`
                 );
             }
         } catch (e) {

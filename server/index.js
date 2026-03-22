@@ -16,14 +16,13 @@ console.log(`[OpenSync Server] Starting on port ${PORT}...`);
 // Generate random room code
 function generateRoomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    // Make sure code is unique
-    if (rooms.has(code)) {
-        return generateRoomCode();
-    }
+    let code;
+    do {
+        code = '';
+        for (let i = 0; i < 6; i++) {
+            code += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+    } while (rooms.has(code));
     return code;
 }
 
@@ -91,7 +90,7 @@ wss.on('connection', (ws) => {
     });
 });
 
-// Heartbeat interval (30s)
+// Heartbeat interval (60s)
 const interval = setInterval(() => {
     wss.clients.forEach((ws) => {
         if (ws.isAlive === false) {
@@ -200,7 +199,12 @@ function handleCreateRoom(ws, clientData, payload) {
 
 // Join an existing room
 function handleJoinRoom(ws, clientData, payload) {
-    const roomCode = payload.roomCode?.toUpperCase();
+    if (!payload.roomCode || typeof payload.roomCode !== 'string') {
+        sendToClient(ws, 'ROOM_ERROR', { message: 'Invalid room code' });
+        return;
+    }
+
+    const roomCode = payload.roomCode.toUpperCase();
     const username = payload.username || 'Guest';
 
     // Check if room exists
@@ -576,13 +580,15 @@ function handleChat(clientData, payload) {
     const { roomCode, username, ws } = clientData;
 
     if (!roomCode) return;
+    if (!payload.text || typeof payload.text !== 'string') return;
 
-    console.log(`[OpenSync Server] Chat from ${username}: ${payload.text}`);
+    const text = payload.text.substring(0, 500);
 
-    // Broadcast to all other clients
+    console.log(`[OpenSync Server] Chat from ${username}: ${text}`);
+
     broadcastToRoom(roomCode, 'CHAT', {
-        username: payload.username || username,
-        text: payload.text
+        username: username,
+        text: text
     }, ws);
 }
 

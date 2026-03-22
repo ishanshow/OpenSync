@@ -611,6 +611,10 @@ body {
   animation: toastIn 0.2s ease forwards, toastOut 0.2s ease 1.3s forwards;
 }
 
+.toast.error {
+  animation: toastIn 0.2s ease forwards, toastOut 0.2s ease 2.8s forwards;
+}
+
 .toast.success {
   background: rgba(34, 197, 94, 0.15);
   border-color: rgba(34, 197, 94, 0.3);

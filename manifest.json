@@ -63,7 +63,6 @@
   ],
   "web_accessible_resources": [
     "icons/*",
-    "content/overlay.css",
-    "content/netflixBridge.js"
+    "content/overlay.css"
   ]
 }

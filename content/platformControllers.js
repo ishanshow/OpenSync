@@ -125,9 +125,32 @@ const OpenSyncPlatformControllers = (function () {
                                 forwardVideoEvent('seek', attachedVideo);
                             }
                             
-                            // Attach listeners now and re-check periodically
+                            // Attach listeners now and re-check periodically until stable
                             attachVideoListeners();
-                            setInterval(attachVideoListeners, 2000);
+                            let nfPollId = setInterval(() => {
+                                attachVideoListeners();
+                                if (attachedVideo && attachedVideo.isConnected) {
+                                    clearInterval(nfPollId);
+                                    nfPollId = null;
+                                }
+                            }, 2000);
+                            
+                            // Watch for video element swaps (SPA navigation)
+                            new MutationObserver(() => {
+                                if (attachedVideo && !attachedVideo.isConnected) {
+                                    attachedVideo = null;
+                                    attachVideoListeners();
+                                    if (!nfPollId) {
+                                        nfPollId = setInterval(() => {
+                                            attachVideoListeners();
+                                            if (attachedVideo && attachedVideo.isConnected) {
+                                                clearInterval(nfPollId);
+                                                nfPollId = null;
+                                            }
+                                        }, 2000);
+                                    }
+                                }
+                            }).observe(document.body || document.documentElement, { childList: true, subtree: true });
                             
                             window.addEventListener('message', function(event) {
                                 if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
@@ -320,11 +343,17 @@ const OpenSyncPlatformControllers = (function () {
                             }
                         }
                         
-                        // Attach listeners now and re-check periodically
+                        // Attach listeners now and re-check until stable
                         attachVideoListeners();
-                        setInterval(attachVideoListeners, 2000);
+                        let pvPollId = setInterval(() => {
+                            attachVideoListeners();
+                            if (attachedVideos.size > 0) {
+                                clearInterval(pvPollId);
+                                pvPollId = null;
+                            }
+                        }, 2000);
                         
-                        // Watch for dynamically added videos
+                        // Watch for dynamically added videos (replaces interval for ongoing detection)
                         const observer = new MutationObserver(() => {
                             attachVideoListeners();
                         });
@@ -530,11 +559,17 @@ const OpenSyncPlatformControllers = (function () {
                             }
                         }
                         
-                        // Attach listeners now and re-check periodically (videos might load later)
+                        // Attach listeners now and re-check until stable
                         attachVideoListeners();
-                        setInterval(attachVideoListeners, 2000);
+                        let glPollId = setInterval(() => {
+                            attachVideoListeners();
+                            if (attachedVideos.size > 0) {
+                                clearInterval(glPollId);
+                                glPollId = null;
+                            }
+                        }, 2000);
                         
-                        // Also watch for dynamically added videos
+                        // Watch for dynamically added videos (replaces interval for ongoing detection)
                         const observer = new MutationObserver(() => {
                             attachVideoListeners();
                         });
@@ -790,9 +825,32 @@ const OpenSyncPlatformControllers = (function () {
                             forwardVideoEvent('seek', attachedVideo, getBitmovinPlayer());
                         }
                         
-                        // Attach listeners now and re-check periodically (video might load later)
+                        // Attach listeners now and re-check until stable
                         attachVideoListeners();
-                        setInterval(attachVideoListeners, 2000);
+                        let hsPollId = setInterval(() => {
+                            attachVideoListeners();
+                            if (attachedVideo && attachedVideo.isConnected) {
+                                clearInterval(hsPollId);
+                                hsPollId = null;
+                            }
+                        }, 2000);
+                        
+                        // Watch for video element swaps (SPA navigation)
+                        new MutationObserver(() => {
+                            if (attachedVideo && !attachedVideo.isConnected) {
+                                attachedVideo = null;
+                                attachVideoListeners();
+                                if (!hsPollId) {
+                                    hsPollId = setInterval(() => {
+                                        attachVideoListeners();
+                                        if (attachedVideo && attachedVideo.isConnected) {
+                                            clearInterval(hsPollId);
+                                            hsPollId = null;
+                                        }
+                                    }, 2000);
+                                }
+                            }
+                        }).observe(document.body || document.documentElement, { childList: true, subtree: true });
                         
                         window.addEventListener('message', function(event) {
                             if (event.source !== window || event.data.source !== 'OPENSYNC_CONTENT') return;
@@ -913,28 +971,30 @@ const OpenSyncPlatformControllers = (function () {
         return findGenericVideo();
     }
 
-    // Search for videos inside shadow DOMs
+    // Search for videos inside shadow DOMs using TreeWalker for efficiency
     function findVideosInShadowDOM(selector) {
         const videos = [];
-        const allElements = document.querySelectorAll('*');
+        const walker = document.createTreeWalker(
+            document.documentElement,
+            NodeFilter.SHOW_ELEMENT,
+            { acceptNode: (node) => node.shadowRoot ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP }
+        );
 
-        for (const el of allElements) {
-            if (el.shadowRoot) {
-                try {
-                    const shadowVideos = el.shadowRoot.querySelectorAll(selector);
-                    videos.push(...shadowVideos);
+        let el;
+        while ((el = walker.nextNode())) {
+            try {
+                const shadowVideos = el.shadowRoot.querySelectorAll(selector);
+                videos.push(...shadowVideos);
 
-                    // Recursive shadow root search
-                    const nestedElements = el.shadowRoot.querySelectorAll('*');
-                    for (const nested of nestedElements) {
-                        if (nested.shadowRoot) {
-                            const nestedVideos = nested.shadowRoot.querySelectorAll(selector);
-                            videos.push(...nestedVideos);
-                        }
+                // One level of nested shadow roots
+                const nested = el.shadowRoot.querySelectorAll('*');
+                for (const n of nested) {
+                    if (n.shadowRoot) {
+                        videos.push(...n.shadowRoot.querySelectorAll(selector));
                     }
-                } catch (e) {
-                    // Access denied to shadow root
                 }
+            } catch (e) {
+                // Access denied to shadow root
             }
         }
 

@@ -355,7 +355,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         toast.className = 'toast error';
         toast.textContent = message;
         document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+        toast.addEventListener('animationend', (e) => {
+            if (e.animationName === 'toastOut') toast.remove();
+        });
     }
 
     function showTooltip(message) {
@@ -363,7 +365,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         toast.className = 'toast success';
         toast.textContent = message;
         document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 1500);
+        toast.addEventListener('animationend', (e) => {
+            if (e.animationName === 'toastOut') toast.remove();
+        });
     }
 
     // Listen for updates from content script

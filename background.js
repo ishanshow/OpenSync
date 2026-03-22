@@ -12,10 +12,14 @@ let serverUrl = DEFAULT_SERVER_URL;
 browser.runtime.onInstalled.addListener(() => {
   console.log('OpenSync extension installed');
 
-  // Initialize storage with defaults
-  browser.storage.local.set({
-    serverUrl: DEFAULT_SERVER_URL,
-    username: 'User_' + Math.random().toString(36).substring(2, 8)
+  // Only set defaults for values that don't already exist
+  browser.storage.local.get(['serverUrl', 'username']).then(existing => {
+    const defaults = {};
+    if (!existing.serverUrl) defaults.serverUrl = DEFAULT_SERVER_URL;
+    if (!existing.username) defaults.username = 'User_' + Math.random().toString(36).substring(2, 8);
+    if (Object.keys(defaults).length > 0) {
+      browser.storage.local.set(defaults);
+    }
   });
 });
 
