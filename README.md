@@ -63,6 +63,44 @@ OpenSync/
     └── index.js
 ```
 
+## Building the Extension Zip
+
+To generate a `.zip` file for uploading to [Firefox Add-ons](https://addons.mozilla.org):
+
+### Steps
+
+1. **Update the version** in both files:
+   - `manifest.json` &rarr; `"version": "x.y.z"`
+   - `popup/popup.html` &rarr; `<span class="version-badge">vx.y.z</span>`
+
+2. **Run the build script** from the project root:
+   ```powershell
+   .\build.ps1
+   ```
+   This produces `OpenSync-vX.Y.Z.zip` containing only the extension files with correct forward-slash paths.
+
+3. **Upload** the zip at https://addons.mozilla.org/developers/addon/submit
+
+### What the build script does
+
+- Reads the version from `manifest.json` automatically
+- Verifies the popup HTML version badge matches
+- Includes only extension files (`manifest.json`, `background.js`, `content/`, `popup/`, `lib/`, `icons/`)
+- Excludes `server/`, `node_modules/`, `test/`, `.git/`, `.gitignore`, `README.md`, `*.zip`, `build.ps1`
+- Uses forward-slash paths in the zip (required by Firefox's validator)
+
+### Manual build (without the script)
+
+If you prefer not to use the script, any tool that creates a standard zip with forward-slash paths works. For example, on Linux/macOS:
+
+```bash
+zip -r OpenSync-v1.2.0.zip manifest.json background.js content/ popup/ lib/ icons/
+```
+
+> **Note:** Do NOT use PowerShell's `Compress-Archive` directly -- it produces backslash paths on Windows which Firefox rejects.
+
+---
+
 ## 🌍 Sharing with Friends (Remote Sync)
 
 To watch with friends over the internet, you need to expose your local server and share the extension.

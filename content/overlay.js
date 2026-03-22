@@ -22,12 +22,8 @@ const OpenSyncOverlay = (function () {
 
     // Helper function to safely create SVG element from string
     function createSvgElement(svgString) {
-        // Create a temporary container to parse the SVG
-        const container = document.createElement('div');
-        // Use textContent assignment to build HTML safely
-        // The SVG strings are static constants defined above, not user input
-        container.insertAdjacentHTML('beforeend', svgString.trim());
-        return container.firstChild;
+        const doc = new DOMParser().parseFromString(svgString.trim(), 'image/svg+xml');
+        return document.importNode(doc.documentElement, true);
     }
 
     // Create the overlay elements
