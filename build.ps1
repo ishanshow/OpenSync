@@ -61,7 +61,8 @@ $files = Get-ChildItem -Path . -Recurse -File | Where-Object {
     $_.Name -ne '.gitignore' -and
     $_.Name -ne 'README.md' -and
     $_.Name -ne 'package-lock.json' -and
-    $_.Name -ne 'build.ps1'
+    $_.Name -ne 'build.ps1' -and
+    $_.Name -ne 'icon-1024.png'
 }
 
 foreach ($f in $files) {
