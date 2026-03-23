@@ -549,17 +549,14 @@
     function handleLocalPlay(state) {
         if (!isConnected || !state) return;
         
-        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
         if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
             console.log('[OpenSync] Skipping PLAY broadcast (navigation/loading in progress)');
             return;
         }
 
-        lastLocalActionTime = Date.now();
-
-        // Prevent redundant PLAY events
         if (lastPlayingState === true) return;
         lastPlayingState = true;
+        lastLocalActionTime = Date.now();
 
         console.log('[OpenSync] Sending PLAY to server at', state.currentTime.toFixed(2));
         OpenSyncWebSocketClient.sendPlay(state.currentTime);
@@ -568,17 +565,14 @@
     function handleLocalPause(state) {
         if (!isConnected || !state) return;
         
-        // Don't broadcast video events if we're navigating, redirect is pending, or waiting for all ready
         if (isNavigatingAway || isPendingRedirect || isWaitingForAllReady) {
             console.log('[OpenSync] Skipping PAUSE broadcast (navigation/loading in progress)');
             return;
         }
 
-        lastLocalActionTime = Date.now();
-
-        // Prevent redundant PAUSE events
         if (lastPlayingState === false) return;
         lastPlayingState = false;
+        lastLocalActionTime = Date.now();
 
         console.log('[OpenSync] Sending PAUSE to server at', state.currentTime.toFixed(2));
         OpenSyncWebSocketClient.sendPause(state.currentTime);
