@@ -11,10 +11,53 @@ const OpenSyncWebSocketClient = (function () {
     let reconnectTimer = null;
     let eventCallbacks = {};
 
-    const MAX_RECONNECT_ATTEMPTS = 5;
+    const MAX_RECONNECT_ATTEMPTS = 10;
     const RECONNECT_DELAY = 2000;
+    const WS_CONNECT_TIMEOUT = 15000;
 
-    // Initialize WebSocket connection
+    const WAKE_MAX_ATTEMPTS = 12;
+    const WAKE_POLL_INTERVAL = 5000;
+
+    function getHttpUrl() {
+        return serverUrl
+            .replace(/^wss:\/\//, 'https://')
+            .replace(/^ws:\/\//, 'http://');
+    }
+
+    function wakeServer(onStatus) {
+        const healthUrl = getHttpUrl() + '/health';
+        let attempt = 0;
+
+        return new Promise((resolve, reject) => {
+            function poll() {
+                attempt++;
+                if (onStatus) onStatus('waking', attempt);
+                console.log(`[OpenSync] Wake ping ${attempt}/${WAKE_MAX_ATTEMPTS}: ${healthUrl}`);
+
+                fetch(healthUrl)
+                    .then(res => {
+                        if (res.ok) {
+                            console.log('[OpenSync] Server is awake');
+                            if (onStatus) onStatus('ready', attempt);
+                            resolve(true);
+                        } else {
+                            throw new Error('Non-OK status: ' + res.status);
+                        }
+                    })
+                    .catch(err => {
+                        console.log(`[OpenSync] Wake ping failed (${attempt}/${WAKE_MAX_ATTEMPTS}):`, err.message);
+                        if (attempt >= WAKE_MAX_ATTEMPTS) {
+                            if (onStatus) onStatus('failed', attempt);
+                            reject(new Error('Server did not wake after ' + WAKE_MAX_ATTEMPTS + ' attempts'));
+                        } else {
+                            setTimeout(poll, WAKE_POLL_INTERVAL);
+                        }
+                    });
+            }
+            poll();
+        });
+    }
+
     function connect(url, callbacks = {}) {
         serverUrl = url || serverUrl;
         eventCallbacks = callbacks;
@@ -46,7 +89,6 @@ const OpenSyncWebSocketClient = (function () {
                         eventCallbacks.onDisconnect();
                     }
 
-                    // Attempt reconnection if we were in a room
                     if (roomCode && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
                         scheduleReconnect();
                     }
@@ -60,13 +102,12 @@ const OpenSyncWebSocketClient = (function () {
                     reject(error);
                 };
 
-                // Timeout for connection
                 setTimeout(() => {
                     if (!isConnected) {
                         ws.close();
                         reject(new Error('Connection timeout'));
                     }
-                }, 5000);
+                }, WS_CONNECT_TIMEOUT);
 
             } catch (error) {
                 reject(error);
@@ -74,18 +115,17 @@ const OpenSyncWebSocketClient = (function () {
         });
     }
 
-    // Schedule reconnection attempt
     function scheduleReconnect() {
         if (reconnectTimer) return;
 
         reconnectAttempts++;
-        console.log(`[OpenSync] Reconnecting... attempt ${reconnectAttempts}`);
+        const delay = Math.min(RECONNECT_DELAY * reconnectAttempts, 15000);
+        console.log(`[OpenSync] Reconnecting in ${delay}ms... attempt ${reconnectAttempts}`);
 
         reconnectTimer = setTimeout(async () => {
             reconnectTimer = null;
             try {
                 await connect(serverUrl, eventCallbacks);
-                // Rejoin room after reconnecting
                 if (roomCode) {
                     joinRoom(roomCode, username);
                 }
@@ -94,7 +134,7 @@ const OpenSyncWebSocketClient = (function () {
                     scheduleReconnect();
                 }
             }
-        }, RECONNECT_DELAY * reconnectAttempts);
+        }, delay);
     }
 
     // Handle incoming messages
@@ -322,6 +362,7 @@ const OpenSyncWebSocketClient = (function () {
     }
 
     return {
+        wakeServer,
         connect,
         disconnect,
         createRoom,

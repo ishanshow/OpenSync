@@ -637,12 +637,33 @@
         OpenSyncWebSocketClient.sendPlay(state.currentTime);
     }
 
-    // Connect to sync server
+    // Connect to sync server (wakes it from cold start if needed)
     async function connectToServer(url) {
         serverUrl = url || serverUrl;
 
         try {
             console.log('[OpenSync] Connecting to server:', serverUrl);
+
+            if (isMainFrame) {
+                OpenSyncOverlay.updateStatus('Connecting...');
+            }
+
+            try {
+                await OpenSyncWebSocketClient.wakeServer((status, attempt) => {
+                    if (!isMainFrame) return;
+                    if (status === 'waking' && attempt > 1) {
+                        OpenSyncOverlay.updateStatus('Waking server...');
+                        if (attempt === 2) {
+                            OpenSyncOverlay.addSystemMessage('Server is waking up, please wait...');
+                        }
+                    } else if (status === 'ready') {
+                        OpenSyncOverlay.updateStatus('Connecting...');
+                    }
+                });
+            } catch (wakeErr) {
+                console.warn('[OpenSync] Server wake failed, attempting WS connect anyway:', wakeErr.message);
+            }
+
             await OpenSyncWebSocketClient.connect(serverUrl, {
                 onConnect: () => {
                     console.log('[OpenSync] Connected to server!');
