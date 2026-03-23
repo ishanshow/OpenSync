@@ -18,15 +18,103 @@ document.addEventListener('DOMContentLoaded', async () => {
     const platformBtns = document.querySelectorAll('.platform-btn');
     const activePlatform = document.getElementById('activePlatform');
 
+    const serverStatusBtn = document.getElementById('serverStatusBtn');
+    const refreshServerBtn = document.getElementById('refreshServerBtn');
+
     // State
     let canUseOpenSync = false;
-    let hasContentScript = false; // Whether the current page has content script
+    let hasContentScript = false;
     let currentRoom = null;
     let activeTabId = null;
     let selectedPlatform = null;
+    let serverCheckInFlight = false;
+
+    function getHealthUrl() {
+        const wsUrl = serverUrlInput.value || 'wss://opensync.onrender.com';
+        return wsUrl
+            .replace(/^wss:\/\//, 'https://')
+            .replace(/^ws:\/\//, 'http://') + '/health';
+    }
+
+    function setServerStatus(status) {
+        serverStatusBtn.classList.remove('status-checking', 'status-online', 'status-offline');
+        refreshServerBtn.classList.remove('refreshing');
+
+        if (status === 'checking') {
+            serverStatusBtn.classList.add('status-checking');
+            serverStatusBtn.title = 'Checking server...';
+            refreshServerBtn.classList.add('refreshing');
+        } else if (status === 'online') {
+            serverStatusBtn.classList.add('status-online');
+            serverStatusBtn.title = 'Server is online';
+        } else if (status === 'offline') {
+            serverStatusBtn.classList.add('status-offline');
+            serverStatusBtn.title = 'Server is offline — click to retry';
+        } else {
+            serverStatusBtn.title = 'Server status unknown';
+        }
+    }
+
+    async function checkServerHealth() {
+        if (serverCheckInFlight) return;
+        serverCheckInFlight = true;
+        setServerStatus('checking');
+
+        try {
+            const res = await fetch(getHealthUrl(), { signal: AbortSignal.timeout(10000) });
+            setServerStatus(res.ok ? 'online' : 'offline');
+        } catch {
+            setServerStatus('offline');
+        } finally {
+            serverCheckInFlight = false;
+        }
+    }
+
+    async function wakeAndCheck() {
+        if (serverCheckInFlight) return;
+        serverCheckInFlight = true;
+        setServerStatus('checking');
+
+        const url = getHealthUrl();
+        const MAX = 12;
+        const INTERVAL = 5000;
+
+        for (let i = 1; i <= MAX; i++) {
+            try {
+                const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+                if (res.ok) {
+                    setServerStatus('online');
+                    serverCheckInFlight = false;
+                    return;
+                }
+            } catch { /* keep trying */ }
+
+            if (i < MAX) {
+                await new Promise(r => setTimeout(r, INTERVAL));
+            }
+        }
+
+        setServerStatus('offline');
+        serverCheckInFlight = false;
+    }
+
+    serverStatusBtn.addEventListener('click', () => {
+        if (serverStatusBtn.classList.contains('status-offline')) {
+            wakeAndCheck();
+        } else {
+            checkServerHealth();
+        }
+    });
+
+    refreshServerBtn.addEventListener('click', () => {
+        if (refreshServerBtn.classList.contains('refreshing')) return;
+        checkServerHealth();
+    });
 
     // Initialize
     await init();
+
+    checkServerHealth();
 
     async function init() {
         try {
@@ -336,6 +424,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             type: 'UPDATE_SERVER_URL',
             serverUrl: serverUrlInput.value
         });
+        checkServerHealth();
     });
 
     // Room code input formatting
