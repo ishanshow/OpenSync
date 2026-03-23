@@ -58,6 +58,7 @@
     let isPendingRedirect = false; // True when we're about to redirect due to URL_CHANGE
     let isNavigatingAway = false; // True when WE changed the video (don't echo back)
     let pendingRedirectUrl = null; // The URL we're redirecting to
+    let isReconnectingAfterRedirect = false; // Blocks re-redirect when reconnecting after a sync redirect
 
     // Video ready sync state - ensures all users are ready before playing
     let isWaitingForAllReady = false; // True when waiting for all users to be ready
@@ -386,24 +387,36 @@
                 try {
                     const stored = await browser.storage.local.get(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url']);
                     
-                    // Check if we just redirected (deliberate cross-origin redirect for sync)
-                    const isRedirectingForSync = !!stored.opensync_redirect;
+                    // opensync_redirect stores a timestamp (or legacy `true`).
+                    // Treat as stale if > 30s old -- handles browser-close-and-reopen.
+                    const redirectTimestamp = stored.opensync_redirect;
+                    const isRedirectFresh = typeof redirectTimestamp === 'number'
+                        ? (Date.now() - redirectTimestamp < 30000)
+                        : redirectTimestamp === true;
+                    const isRedirectingForSync = !!redirectTimestamp && isRedirectFresh;
+                    
+                    // Clear the flag IMMEDIATELY so no other tab / future page load picks it up.
+                    // This is critical: browser.storage.local persists across browser restarts.
+                    if (redirectTimestamp) {
+                        await browser.storage.local.remove(['opensync_redirect']);
+                    }
+                    
+                    // If there's no active room, wipe any leftover redirect artifacts
+                    if (!stored.opensync_room && (redirectTimestamp || stored.opensync_just_switched_url)) {
+                        console.log('[OpenSync] No active room, cleaning up stale redirect flags');
+                        await browser.storage.local.remove(['opensync_just_switched_url', 'opensync_sync_time']);
+                    }
+                    
                     if (isRedirectingForSync) {
                         console.log('[OpenSync] Loaded via sync redirect, adhering to room.');
                         isNavigation = false;
+                        isReconnectingAfterRedirect = true;
                         
-                        // IMPORTANT: Update the tab session ID in storage since this is the new active tab
-                        // This allows the redirected tab to "take over" the session
                         if (stored.opensync_room) {
                             stored.opensync_room.tabSessionId = tabSessionId;
                             await browser.storage.local.set({ opensync_room: stored.opensync_room });
                             console.log('[OpenSync] Updated tab session ID after redirect');
                         }
-                        
-                        // Clear redirect flag after processing
-                        setTimeout(() => {
-                            browser.storage.local.remove('opensync_redirect').catch(() => {});
-                        }, 2000);
                     }
                     
                     if (stored.opensync_room) {
@@ -867,30 +880,38 @@
             console.log('[OpenSync] Updated content tracking:', lastKnownContentId);
         }
         
-        // Check if we need to redirect to the video URL
-        // This enables joining from any tab
-        if (payload.currentUrl && !isSameContent(payload.currentUrl, window.location.href, currentPlatform)) {
-            console.log('[OpenSync] Joining from different page, redirecting to video:', payload.currentUrl);
+        // Check if we need to redirect to the video URL.
+        // Skip entirely if we just arrived via a sync redirect (prevents infinite loops).
+        if (payload.currentUrl && !isReconnectingAfterRedirect &&
+            !isSameContent(payload.currentUrl, window.location.href, currentPlatform)) {
             
-            // Set redirect flags using browser.storage.local (persists across origins!)
-            try {
-                await browser.storage.local.set({
-                    opensync_redirect: true,
-                    opensync_just_switched_url: true
-                });
-                console.log('[OpenSync] Redirect flags saved');
-            } catch (e) {
-                console.warn('[OpenSync] Failed to save redirect flags:', e);
+            // Per-session redirect guard (sessionStorage is tab-scoped, resets per origin)
+            const redirectCount = parseInt(sessionStorage.getItem('opensync_redirect_count') || '0', 10);
+            if (redirectCount >= 1) {
+                console.warn('[OpenSync] Already redirected this session, refusing another redirect');
+                await browser.storage.local.remove(['opensync_redirect', 'opensync_just_switched_url', 'opensync_sync_time']);
+            } else {
+                console.log('[OpenSync] Joining from different page, redirecting to video:', payload.currentUrl);
+                sessionStorage.setItem('opensync_redirect_count', String(redirectCount + 1));
+                
+                try {
+                    await browser.storage.local.set({
+                        opensync_redirect: Date.now(),
+                        opensync_just_switched_url: true
+                    });
+                } catch (e) {
+                    console.warn('[OpenSync] Failed to save redirect flags:', e);
+                }
+                
+                lastKnownUrl = payload.currentUrl;
+                lastKnownContentId = getContentIdFromUrl(payload.currentUrl, currentPlatform);
+                
+                window.location.href = payload.currentUrl;
+                return;
             }
-            
-            // Update tracking for the redirect target
-            lastKnownUrl = payload.currentUrl;
-            lastKnownContentId = getContentIdFromUrl(payload.currentUrl, currentPlatform);
-            
-            // Redirect to the video URL
-            window.location.href = payload.currentUrl;
-            return; // Stop here - page will reload
         }
+        
+        isReconnectingAfterRedirect = false;
 
         // Only create overlay in main frame
         if (isMainFrame) {
@@ -917,9 +938,8 @@
             console.log('[OpenSync] We navigated, pushing update to room');
             OpenSyncWebSocketClient.sendUrlChange(window.location.href);
             isNavigation = false;
-        } else if (payload.currentUrl && !isSameContent(payload.currentUrl, window.location.href, currentPlatform)) {
-            // We're on a different video than the room - this shouldn't happen after the redirect above
-            // but handle it as a fallback
+        } else if (payload.currentUrl && !isReconnectingAfterRedirect &&
+                   !isSameContent(payload.currentUrl, window.location.href, currentPlatform)) {
             handleRemoteUrlChange({ url: payload.currentUrl });
         }
 
@@ -1336,9 +1356,10 @@
         isHost = false;
         roomCode = null;
         participantCount = 1;
+        isReconnectingAfterRedirect = false;
 
-        // Clear browser.storage.local to prevent auto-reconnect
         browser.storage.local.remove(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url', 'opensync_sync_time']).catch(() => {});
+        try { sessionStorage.removeItem('opensync_redirect_count'); } catch (e) {}
 
         sendResponse({ success: true });
     }
@@ -1653,10 +1674,10 @@
     let isInRedirectMode = false;
     let checkUrlInitialized = false;
     
-    // Initialize redirect mode from storage on load
     browser.storage.local.get('opensync_redirect').then(result => {
-        isInRedirectMode = !!result.opensync_redirect;
-        // Clear flag after a delay
+        const ts = result.opensync_redirect;
+        const isFresh = typeof ts === 'number' ? (Date.now() - ts < 30000) : ts === true;
+        isInRedirectMode = !!ts && isFresh;
         if (isInRedirectMode) {
             console.log('[OpenSync] Redirect mode detected, suppressing URL checks for 5s');
             setTimeout(() => {
@@ -1664,7 +1685,6 @@
                 console.log('[OpenSync] Redirect mode ended');
             }, 5000);
         }
-        // Mark as initialized so checkUrl can run
         checkUrlInitialized = true;
     }).catch(() => {
         checkUrlInitialized = true;
@@ -1819,9 +1839,9 @@
                 // Set redirect flags using browser.storage.local (persists across origins!)
                 // Also store the sync time so we know where to seek after redirect
                 browser.storage.local.set({
-                    opensync_redirect: true,
+                    opensync_redirect: Date.now(),
                     opensync_just_switched_url: true,
-                    opensync_sync_time: pendingSyncTime // Store sync time for after redirect
+                    opensync_sync_time: pendingSyncTime
                 }).then(() => {
                     // Disconnect WebSocket BEFORE redirecting to prevent any race conditions
                     // The new page will reconnect
