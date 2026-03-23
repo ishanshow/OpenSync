@@ -2,14 +2,32 @@
 // Handles room management and video sync between clients
 
 const WebSocket = require('ws');
+const express = require('express');
+const http = require('http');
 
 const PORT = process.env.PORT || 3000;
 
 // Room storage
 const rooms = new Map();
 
-// Create WebSocket server
-const wss = new WebSocket.Server({ port: PORT });
+// Express app for HTTP health checks (required by Render / hosting platforms)
+const app = express();
+
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        uptime: process.uptime(),
+        rooms: rooms.size,
+        connections: wss.clients.size
+    });
+});
+
+app.get('/', (req, res) => {
+    res.json({ service: 'OpenSync WebSocket Server', status: 'running' });
+});
+
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
 console.log(`[OpenSync Server] Starting on port ${PORT}...`);
 
@@ -794,14 +812,15 @@ setInterval(() => {
     });
 }, 60 * 60 * 1000); // Every hour
 
-// Log server ready
-wss.on('listening', () => {
+// Start the HTTP + WebSocket server
+server.listen(PORT, () => {
     console.log(`[OpenSync Server] Ready and listening on port ${PORT}`);
+    console.log(`[OpenSync Server] HTTP health check: http://localhost:${PORT}/health`);
     console.log(`[OpenSync Server] WebSocket URL: ws://localhost:${PORT}`);
 });
 
 // Handle server errors
-wss.on('error', (error) => {
+server.on('error', (error) => {
     console.error('[OpenSync Server] Server error:', error);
 });
 
@@ -809,7 +828,9 @@ wss.on('error', (error) => {
 process.on('SIGINT', () => {
     console.log('\n[OpenSync Server] Shutting down...');
     wss.close(() => {
-        console.log('[OpenSync Server] Server closed');
-        process.exit(0);
+        server.close(() => {
+            console.log('[OpenSync Server] Server closed');
+            process.exit(0);
+        });
     });
 });
