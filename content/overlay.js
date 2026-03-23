@@ -10,19 +10,26 @@ const OpenSyncOverlay = (function () {
     let onForceSync = null;
     let isOverlayEnabled = true; // Set to false for headless mode
 
-    // SVG Icons
+    // SVG Icons (xmlns is required for DOMParser to place elements in the correct SVG namespace)
+    const SVG_NS = 'xmlns="http://www.w3.org/2000/svg"';
     const icons = {
-        logo: `<svg width="18" height="18" viewBox="0 0 28 28" fill="none"><rect x="2" y="6" width="24" height="16" rx="3" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="14" r="4" fill="currentColor"/><path d="M6 22L10 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M22 22L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
-        users: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M2 14C2 11.2386 4.23858 9 7 9H9C11.7614 9 14 11.2386 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
-        sync: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8C2 4.68629 4.68629 2 8 2C10.2208 2 12.1599 3.26686 13.1973 5.11111" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 8C14 11.3137 11.3137 14 8 14C5.77919 14 3.84012 12.7331 2.80274 10.8889" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13 2V5.5H9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 14V10.5H6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-        chat: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14 10C14 10.5304 13.7893 11.0391 13.4142 11.4142C13.0391 11.7893 12.5304 12 12 12H5L2 15V4C2 3.46957 2.21071 2.96086 2.58579 2.58579C2.96086 2.21071 3.46957 2 4 2H12C12.5304 2 13.0391 2.21071 13.4142 2.58579C13.7893 2.96086 14 3.46957 14 4V10Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-        send: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14.6667 1.33334L7.33334 8.66668" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.6667 1.33334L10 14.6667L7.33334 8.66668L1.33334 6.00001L14.6667 1.33334Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-        close: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10.5 3.5L3.5 10.5M3.5 3.5L10.5 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`
+        logo: `<svg ${SVG_NS} width="18" height="18" viewBox="0 0 28 28" fill="none"><rect x="2" y="6" width="24" height="16" rx="3" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="14" r="4" fill="currentColor"/><path d="M6 22L10 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M22 22L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+        users: `<svg ${SVG_NS} width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M2 14C2 11.2386 4.23858 9 7 9H9C11.7614 9 14 11.2386 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+        sync: `<svg ${SVG_NS} width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8C2 4.68629 4.68629 2 8 2C10.2208 2 12.1599 3.26686 13.1973 5.11111" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 8C14 11.3137 11.3137 14 8 14C5.77919 14 3.84012 12.7331 2.80274 10.8889" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13 2V5.5H9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 14V10.5H6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+        chat: `<svg ${SVG_NS} width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14 10C14 10.5304 13.7893 11.0391 13.4142 11.4142C13.0391 11.7893 12.5304 12 12 12H5L2 15V4C2 3.46957 2.21071 2.96086 2.58579 2.58579C2.96086 2.21071 3.46957 2 4 2H12C12.5304 2 13.0391 2.21071 13.4142 2.58579C13.7893 2.96086 14 3.46957 14 4V10Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+        send: `<svg ${SVG_NS} width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14.6667 1.33334L7.33334 8.66668" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.6667 1.33334L10 14.6667L7.33334 8.66668L1.33334 6.00001L14.6667 1.33334Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+        close: `<svg ${SVG_NS} width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10.5 3.5L3.5 10.5M3.5 3.5L10.5 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`
     };
 
-    // Helper function to safely create SVG element from string
     function createSvgElement(svgString) {
         const doc = new DOMParser().parseFromString(svgString.trim(), 'image/svg+xml');
+        const errorNode = doc.querySelector('parsererror');
+        if (errorNode) {
+            console.error('[OpenSync] SVG parse error:', errorNode.textContent);
+            const fallback = document.createElement('span');
+            fallback.style.cssText = 'display:inline-block;width:16px;height:16px;';
+            return fallback;
+        }
         return document.importNode(doc.documentElement, true);
     }
 
