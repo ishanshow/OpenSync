@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: opensync-server
+    name: opensync
     runtime: node
     region: oregon
     plan: free

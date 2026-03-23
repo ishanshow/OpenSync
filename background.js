@@ -2,7 +2,7 @@
 // Handles extension lifecycle and message passing
 
 // Default server URL (change for production)
-const DEFAULT_SERVER_URL = 'wss://opensync-server.onrender.com';
+const DEFAULT_SERVER_URL = 'wss://opensync.onrender.com';
 
 // Extension state
 let currentRoom = null;
