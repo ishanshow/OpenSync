@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Load persistent storage for username
             const storedData = await browser.storage.local.get(['username', 'serverUrl']);
 
-            serverUrlInput.value = state.serverUrl || storedData.serverUrl || 'ws://localhost:3000';
+            serverUrlInput.value = state.serverUrl || storedData.serverUrl || 'wss://opensync.onrender.com';
 
             // Set username if exists
             const usernameInput = document.getElementById('usernameInput');
