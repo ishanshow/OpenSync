@@ -49,7 +49,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentRoom = null;
     let activeTabId = null;
     let selectedPlatform = null;
+    let currentTabPlatform = null;
     let serverCheckInFlight = false;
+
+    const PLATFORM_URLS = {
+        youtube: 'https://www.youtube.com',
+        netflix: 'https://www.netflix.com',
+        primevideo: 'https://www.primevideo.com',
+        hotstar: 'https://www.hotstar.com'
+    };
     let onboardingComplete = false;
 
     // --- Helper functions ---
@@ -252,6 +260,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (globalModeHint) globalModeHint.style.display = 'block';
             } else {
                 if (globalModeHint) globalModeHint.style.display = 'none';
+
+                if (selectedPlatform !== currentTabPlatform && PLATFORM_URLS[selectedPlatform] && activeTabId) {
+                    browser.tabs.update(activeTabId, { url: PLATFORM_URLS[selectedPlatform] });
+                    currentTabPlatform = selectedPlatform;
+                    hasContentScript = true;
+                }
             }
         });
     });
@@ -492,6 +506,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 } catch (e) {
                     selectedPlatform = 'global';
                 }
+
+                currentTabPlatform = selectedPlatform;
 
                 if (selectedPlatform) {
                     const btn = document.querySelector(`.platform-btn[data-platform="${selectedPlatform}"]`);

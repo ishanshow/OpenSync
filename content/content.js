@@ -911,6 +911,10 @@
             } else {
                 console.log('[OpenSync] Joining from different page, redirecting to video:', payload.currentUrl);
                 sessionStorage.setItem('opensync_redirect_count', String(redirectCount + 1));
+
+                isPendingRedirect = true;
+                isNavigatingAway = true;
+                pendingRedirectUrl = payload.currentUrl;
                 
                 try {
                     await browser.storage.local.set({
