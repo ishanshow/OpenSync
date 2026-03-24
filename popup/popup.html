@@ -16,11 +16,12 @@
     <!-- Header -->
     <header class="header">
       <div class="logo">
-        <svg class="logo-icon" width="28" height="28" viewBox="0 0 28 28" fill="none">
-          <path d="M8 6L20 14L8 22V6Z" fill="currentColor" opacity="0.3"/>
-          <path d="M8 6L20 14L8 22V6Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-          <path d="M4 10C4 5.58 7.58 2 12 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M24 18C24 22.42 20.42 26 16 26" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <svg class="logo-icon" width="28" height="28" viewBox="100 120 824 784" fill="none">
+          <path d="M 177 571 A 340 340 0 0 1 731 252" stroke="currentColor" stroke-width="46" stroke-linecap="round"/>
+          <path d="M 847 453 A 340 340 0 0 1 293 772" stroke="currentColor" stroke-width="46" stroke-linecap="round"/>
+          <path d="M 703 312 L 807 329 Q 827 332 820 313 L 786 214 Q 779 195 766 210 L 696 294 Q 683 309 703 312 Z" fill="currentColor"/>
+          <path d="M 321 712 L 217 695 Q 197 692 204 711 L 238 810 Q 245 829 258 814 L 328 730 Q 341 715 321 712 Z" fill="currentColor"/>
+          <path d="M 410 380 Q 410 330 453 355 L 687 487 Q 730 512 687 537 L 453 670 Q 410 695 410 645 Z" fill="currentColor"/>
         </svg>
         <span class="logo-text">OpenSync</span>
       </div>
@@ -28,10 +29,10 @@
     </header>
 
     <!-- Status Indicator -->
-    <div id="statusBar" class="status-bar status-disconnected">
+    <div id="statusBar" class="status-bar">
       <div class="status-indicator">
         <span class="status-dot"></span>
-        <span id="statusText">Not on video page</span>
+        <span id="statusText">Loading...</span>
       </div>
     </div>
 
@@ -40,11 +41,12 @@
       <!-- Welcome / Onboarding -->
       <section id="welcomeSection" class="section hidden">
         <div class="welcome-content">
-          <svg class="welcome-icon" width="48" height="48" viewBox="0 0 28 28" fill="none">
-            <path d="M8 6L20 14L8 22V6Z" fill="currentColor" opacity="0.3"/>
-            <path d="M8 6L20 14L8 22V6Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-            <path d="M4 10C4 5.58 7.58 2 12 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <path d="M24 18C24 22.42 20.42 26 16 26" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <svg class="welcome-icon" width="48" height="48" viewBox="100 120 824 784" fill="none">
+            <path d="M 177 571 A 340 340 0 0 1 731 252" stroke="currentColor" stroke-width="46" stroke-linecap="round"/>
+            <path d="M 847 453 A 340 340 0 0 1 293 772" stroke="currentColor" stroke-width="46" stroke-linecap="round"/>
+            <path d="M 703 312 L 807 329 Q 827 332 820 313 L 786 214 Q 779 195 766 210 L 696 294 Q 683 309 703 312 Z" fill="currentColor"/>
+            <path d="M 321 712 L 217 695 Q 197 692 204 711 L 238 810 Q 245 829 258 814 L 328 730 Q 341 715 321 712 Z" fill="currentColor"/>
+            <path d="M 410 380 Q 410 330 453 355 L 687 487 Q 730 512 687 537 L 453 670 Q 410 695 410 645 Z" fill="currentColor"/>
           </svg>
           <h2 class="welcome-title">Welcome to OpenSync</h2>
           <p class="welcome-subtitle">Watch videos together in perfect sync</p>
@@ -64,7 +66,7 @@
       </section>
 
       <!-- Not Connected State -->
-      <section id="notConnectedSection" class="section">
+      <section id="notConnectedSection" class="section hidden">
         <div class="empty-state">
           <svg class="empty-icon" width="48" height="48" viewBox="0 0 48 48" fill="none">
             <rect x="4" y="10" width="40" height="28" rx="4" stroke="currentColor" stroke-width="2" stroke-dasharray="4 4"/>
