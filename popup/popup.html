@@ -37,6 +37,32 @@
 
     <!-- Main Content -->
     <main class="content">
+      <!-- Welcome / Onboarding -->
+      <section id="welcomeSection" class="section hidden">
+        <div class="welcome-content">
+          <svg class="welcome-icon" width="48" height="48" viewBox="0 0 28 28" fill="none">
+            <rect x="2" y="6" width="24" height="16" rx="3" stroke="currentColor" stroke-width="2"/>
+            <circle cx="14" cy="14" r="4" fill="currentColor"/>
+            <path d="M6 22L10 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M22 22L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <h2 class="welcome-title">Welcome to OpenSync</h2>
+          <p class="welcome-subtitle">Watch videos together in perfect sync</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label">What should we call you?</label>
+          <input type="text" id="welcomeNameInput" class="input" placeholder="" maxlength="15" autocomplete="off">
+        </div>
+        <div class="welcome-actions">
+          <button id="welcomeSaveBtn" class="btn btn-primary welcome-save-btn">
+            <span>Let's Go</span>
+          </button>
+          <button id="welcomeSkipBtn" class="btn btn-ghost welcome-skip-btn">
+            <span>Skip</span>
+          </button>
+        </div>
+      </section>
+
       <!-- Not Connected State -->
       <section id="notConnectedSection" class="section">
         <div class="empty-state">
@@ -162,6 +188,11 @@
             <div class="sync-pulse"></div>
             <span id="syncStatus">Synced</span>
           </div>
+        </div>
+
+        <div class="active-name-row">
+          <label class="label">Display Name</label>
+          <input type="text" id="activeUsernameInput" class="input input-sm" placeholder="Your name" maxlength="15">
         </div>
 
         <button id="leaveRoomBtn" class="btn btn-ghost btn-danger">

@@ -20,6 +20,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const serverStatusBtn = document.getElementById('serverStatusBtn');
     const refreshServerBtn = document.getElementById('refreshServerBtn');
+    const welcomeSection = document.getElementById('welcomeSection');
+    const welcomeNameInput = document.getElementById('welcomeNameInput');
+    const welcomeSaveBtn = document.getElementById('welcomeSaveBtn');
+    const welcomeSkipBtn = document.getElementById('welcomeSkipBtn');
+
+    const ADJECTIVES = [
+        'Swift', 'Brave', 'Lucky', 'Cosmic', 'Bright', 'Cool', 'Calm',
+        'Happy', 'Zen', 'Bold', 'Chill', 'Witty', 'Vivid', 'Slick',
+        'Keen', 'Nifty', 'Snowy', 'Sunny', 'Misty', 'Lazy'
+    ];
+    const NOUNS = [
+        'Panda', 'Fox', 'Wolf', 'Hawk', 'Bear', 'Tiger', 'Eagle',
+        'Otter', 'Lynx', 'Raven', 'Koala', 'Falcon', 'Owl', 'Moose',
+        'Puma', 'Whale', 'Cobra', 'Bison', 'Heron', 'Mango'
+    ];
+
+    function generateFriendlyName() {
+        const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+        const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+        return adj + noun;
+    }
 
     // State
     let canUseOpenSync = false;
@@ -28,6 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let activeTabId = null;
     let selectedPlatform = null;
     let serverCheckInFlight = false;
+    let onboardingComplete = false;
 
     function getHealthUrl() {
         const wsUrl = serverUrlInput.value || 'wss://opensync.onrender.com';
@@ -121,15 +143,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Load saved settings
             const state = await browser.runtime.sendMessage({ type: 'GET_STATE' });
 
-            // Load persistent storage for username
-            const storedData = await browser.storage.local.get(['username', 'serverUrl']);
+            const storedData = await browser.storage.local.get(['username', 'serverUrl', 'onboardingComplete']);
 
             serverUrlInput.value = state.serverUrl || storedData.serverUrl || 'wss://opensync.onrender.com';
+            onboardingComplete = !!storedData.onboardingComplete;
 
-            // Set username if exists
             const usernameInput = document.getElementById('usernameInput');
             if (storedData.username) {
                 usernameInput.value = storedData.username;
+            }
+
+            if (!onboardingComplete && !storedData.username) {
+                welcomeNameInput.placeholder = generateFriendlyName();
+                showSection('welcome');
+                welcomeNameInput.focus();
+                return;
             }
 
             // Check active tab
@@ -215,16 +243,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         const usernameInput = document.getElementById('usernameInput');
         let name = usernameInput.value.trim();
         if (!name) {
-            name = 'User_' + Math.random().toString(36).substring(2, 6);
+            name = generateFriendlyName();
+            usernameInput.value = name;
         }
-        // Save it
         browser.storage.local.set({ username: name });
         return name;
     }
 
-    // ... UI Update function ...
+    const activeUsernameInput = document.getElementById('activeUsernameInput');
+
+    activeUsernameInput.addEventListener('change', () => {
+        const name = activeUsernameInput.value.trim();
+        if (name) {
+            document.getElementById('usernameInput').value = name;
+            browser.storage.local.set({ username: name });
+        }
+    });
+
     function updateUI() {
-        // Update status bar
         if (!canUseOpenSync) {
             statusBar.className = 'status-bar status-disconnected';
             statusText.textContent = 'Open a video page';
@@ -236,6 +272,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeRoomCode.textContent = currentRoom.code;
             participantCount.textContent = currentRoom.participants || 1;
             activePlatform.textContent = currentRoom.platform || '--';
+            activeUsernameInput.value = document.getElementById('usernameInput').value;
         } else {
             statusBar.className = 'status-bar status-ready';
             statusText.textContent = 'Ready to sync';
@@ -244,11 +281,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function showSection(section) {
+        welcomeSection.classList.add('hidden');
         notConnectedSection.classList.add('hidden');
         roomSection.classList.add('hidden');
         activeRoomSection.classList.add('hidden');
 
         switch (section) {
+            case 'welcome':
+                welcomeSection.classList.remove('hidden');
+                break;
             case 'notConnected':
                 notConnectedSection.classList.remove('hidden');
                 break;
@@ -260,6 +301,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 break;
         }
     }
+
+    // Welcome screen handlers
+    async function completeOnboarding(name) {
+        const usernameInput = document.getElementById('usernameInput');
+        usernameInput.value = name;
+        await browser.storage.local.set({ username: name, onboardingComplete: true });
+        onboardingComplete = true;
+        await init();
+    }
+
+    welcomeSaveBtn.addEventListener('click', () => {
+        const name = welcomeNameInput.value.trim() || welcomeNameInput.placeholder;
+        completeOnboarding(name);
+    });
+
+    welcomeSkipBtn.addEventListener('click', () => {
+        completeOnboarding(welcomeNameInput.placeholder);
+    });
+
+    welcomeNameInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') welcomeSaveBtn.click();
+    });
 
     // Platform Selection
     const globalModeHint = document.getElementById('globalModeHint');
