@@ -45,16 +45,9 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     case 'LEAVE_ROOM':
-      // Clear room from storage
       browser.storage.local.remove('currentRoom');
       browser.storage.local.remove(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url', 'opensync_sync_time']);
       currentRoom = null;
-      // Broadcast to ALL tabs so the correct content script disconnects
-      browser.tabs.query({}).then(tabs => {
-        for (const tab of tabs) {
-          browser.tabs.sendMessage(tab.id, { type: 'ROOM_LEFT' }).catch(() => {});
-        }
-      });
       sendResponse({ success: true });
       return true;
 
