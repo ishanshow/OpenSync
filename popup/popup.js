@@ -225,16 +225,24 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // Check for existing room
+            // Check for existing room (background in-memory state first, then storage fallback)
             if (state.currentRoom) {
                 currentRoom = state.currentRoom;
+            } else {
+                const roomData = await browser.storage.local.get('opensync_room');
+                if (roomData.opensync_room && roomData.opensync_room.roomCode) {
+                    currentRoom = {
+                        code: roomData.opensync_room.roomCode,
+                        participants: roomData.opensync_room.participantCount || 1,
+                        platform: roomData.opensync_room.platform || '--'
+                    };
+                }
             }
 
-            console.log('[OpenSync Popup] Init:', { canUseOpenSync, activeTabId, currentRoom, selectedPlatform });
+            console.log('[OpenSync Popup] Init:', { canUseOpenSync, hasContentScript, activeTabId, currentRoom, selectedPlatform });
             updateUI();
         } catch (error) {
             console.error('[OpenSync Popup] Init error:', error);
-            canUseOpenSync = false;
             updateUI();
         }
     }
@@ -261,11 +269,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     function updateUI() {
-        if (!canUseOpenSync) {
-            statusBar.className = 'status-bar status-disconnected';
-            statusText.textContent = 'Open a video page';
-            showSection('notConnected');
-        } else if (currentRoom) {
+        if (currentRoom) {
             statusBar.className = 'status-bar status-connected';
             statusText.textContent = 'Connected to room';
             showSection('activeRoom');
@@ -273,9 +277,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             participantCount.textContent = currentRoom.participants || 1;
             activePlatform.textContent = currentRoom.platform || '--';
             activeUsernameInput.value = document.getElementById('usernameInput').value;
-        } else {
+        } else if (hasContentScript) {
             statusBar.className = 'status-bar status-ready';
             statusText.textContent = 'Ready to sync';
+            showSection('room');
+        } else {
+            statusBar.className = 'status-bar status-disconnected';
+            statusText.textContent = 'Navigate to a website to create a room';
             showSection('room');
         }
     }
@@ -348,9 +356,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Create Room
     createRoomBtn.addEventListener('click', async () => {
-        // Check if we're on a page with content script
         if (!hasContentScript) {
-            showError('Please navigate to a website first (not a new tab)');
+            showError('Switch to any website tab first, then create a room.');
             return;
         }
         
@@ -415,9 +422,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        // Check if we're on a page with content script
         if (!hasContentScript) {
-            showError('Please navigate to any website first, then join. You will be redirected to the video.');
+            showError('Switch to any website tab first, then try again. You\'ll be redirected to the video.');
             return;
         }
 
