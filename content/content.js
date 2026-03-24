@@ -32,7 +32,10 @@
     let isConnected = false;
     let isHost = false;
     let roomCode = null;
-    let username = 'User_' + Math.random().toString(36).substring(2, 6);
+    const _ADJ = ['Swift','Brave','Lucky','Cosmic','Bright','Cool','Calm','Happy','Zen','Bold','Chill','Witty','Vivid','Slick','Keen','Nifty','Snowy','Sunny','Misty','Lazy'];
+    const _NOUN = ['Panda','Fox','Wolf','Hawk','Bear','Tiger','Eagle','Otter','Lynx','Raven','Koala','Falcon','Owl','Moose','Puma','Whale','Cobra','Bison','Heron','Mango'];
+    function _friendlyName() { return _ADJ[Math.floor(Math.random()*_ADJ.length)] + _NOUN[Math.floor(Math.random()*_NOUN.length)]; }
+    let username = _friendlyName();
     let serverUrl = OpenSyncProtocol.DEFAULT_SERVER_URL;
     let participantCount = 1;
     let currentPlatform = null; // Platform type: 'netflix', 'primevideo', 'hotstar'

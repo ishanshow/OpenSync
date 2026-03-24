@@ -16,7 +16,7 @@ browser.runtime.onInstalled.addListener(() => {
   browser.storage.local.get(['serverUrl', 'username']).then(existing => {
     const defaults = {};
     if (!existing.serverUrl) defaults.serverUrl = DEFAULT_SERVER_URL;
-    if (!existing.username) defaults.username = 'User_' + Math.random().toString(36).substring(2, 8);
+    // Don't set a default username here -- let the popup onboarding handle it
     if (Object.keys(defaults).length > 0) {
       browser.storage.local.set(defaults);
     }
