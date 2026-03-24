@@ -482,7 +482,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             await browser.tabs.sendMessage(activeTabId, { type: 'LEAVE_ROOM' });
         } catch (e) { }
 
-        await browser.runtime.sendMessage({ type: 'LEAVE_ROOM' });
+        try {
+            await browser.runtime.sendMessage({ type: 'LEAVE_ROOM' });
+        } catch (e) { }
+
+        await browser.storage.local.remove(['opensync_room', 'opensync_redirect', 'opensync_just_switched_url', 'opensync_sync_time']).catch(() => {});
         currentRoom = null;
         updateUI();
     });
