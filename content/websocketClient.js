@@ -10,6 +10,7 @@ const OpenSyncWebSocketClient = (function () {
     let reconnectAttempts = 0;
     let reconnectTimer = null;
     let eventCallbacks = {};
+    let intentionalDisconnect = false;
 
     const MAX_RECONNECT_ATTEMPTS = 10;
     const RECONNECT_DELAY = 2000;
@@ -61,6 +62,7 @@ const OpenSyncWebSocketClient = (function () {
     function connect(url, callbacks = {}) {
         serverUrl = url || serverUrl;
         eventCallbacks = callbacks;
+        intentionalDisconnect = false;
 
         return new Promise((resolve, reject) => {
             try {
@@ -89,7 +91,7 @@ const OpenSyncWebSocketClient = (function () {
                         eventCallbacks.onDisconnect();
                     }
 
-                    if (roomCode && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    if (!intentionalDisconnect && roomCode && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
                         scheduleReconnect();
                     }
                 };
@@ -336,6 +338,9 @@ const OpenSyncWebSocketClient = (function () {
 
     // Disconnect
     function disconnect() {
+        intentionalDisconnect = true;
+        roomCode = null;
+
         if (reconnectTimer) {
             clearTimeout(reconnectTimer);
             reconnectTimer = null;
@@ -348,7 +353,6 @@ const OpenSyncWebSocketClient = (function () {
         }
 
         isConnected = false;
-        roomCode = null;
     }
 
     // Get connection status
