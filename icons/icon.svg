@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2A2C32"/>
+      <stop offset="100%" stop-color="#111215"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="200" y1="200" x2="824" y2="824" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2dd4bf"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <g fill="none" stroke="url(#teal)" stroke-width="46" stroke-linecap="round">
+    <path d="M 177 571 A 340 340 0 0 1 731 252"/>
+    <path d="M 847 453 A 340 340 0 0 1 293 772"/>
+  </g>
+
+  <g fill="url(#teal)">
+    <path d="M 703 312 L 807 329 Q 827 332 820 313 L 786 214 Q 779 195 766 210 L 696 294 Q 683 309 703 312 Z"/>
+    <path d="M 321 712 L 217 695 Q 197 692 204 711 L 238 810 Q 245 829 258 814 L 328 730 Q 341 715 321 712 Z"/>
+  </g>
+
+  <path d="M 410 380 Q 410 330 453 355 L 687 487 Q 730 512 687 537 L 453 670 Q 410 695 410 645 Z" fill="url(#teal)"/>
+</svg>
