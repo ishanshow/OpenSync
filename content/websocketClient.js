@@ -16,7 +16,7 @@ const OpenSyncWebSocketClient = (function () {
     const RECONNECT_DELAY = 2000;
     const WS_CONNECT_TIMEOUT = 15000;
 
-    const WAKE_MAX_ATTEMPTS = 12;
+    const WAKE_MAX_ATTEMPTS = 24;
     const WAKE_POLL_INTERVAL = 5000;
 
     function getHttpUrl() {

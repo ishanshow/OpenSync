@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setServerStatus('checking');
 
         const url = getHealthUrl();
-        const MAX = 12;
+        const MAX = 24;
         const INTERVAL = 5000;
 
         for (let i = 1; i <= MAX; i++) {
