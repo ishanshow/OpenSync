@@ -677,11 +677,28 @@
                     isConnected = false;
                     if (isMainFrame) {
                         OpenSyncOverlay.updateStatus('Disconnected');
-                        
-                        // Clear background storage if we're not navigating (unexpected disconnect)
-                        // Check the local redirect flag (set by checkUrl initialization)
+                    }
+                },
+                onReconnecting: (attempt) => {
+                    console.log('[OpenSync] Reconnecting... attempt', attempt);
+                    isConnected = false;
+                    if (isMainFrame) {
+                        OpenSyncOverlay.updateStatus('Reconnecting (' + attempt + ')...');
+                    }
+                },
+                onReconnected: () => {
+                    console.log('[OpenSync] Reconnected to server!');
+                    if (isMainFrame) {
+                        OpenSyncOverlay.updateStatus('Syncing');
+                        OpenSyncOverlay.addSystemMessage('Reconnected!');
+                    }
+                },
+                onReconnectFailed: () => {
+                    console.log('[OpenSync] All reconnection attempts failed');
+                    isConnected = false;
+                    if (isMainFrame) {
+                        OpenSyncOverlay.updateStatus('Disconnected');
                         if (!isInRedirectMode) {
-                            // Notify popup that we disconnected
                             try {
                                 browser.runtime.sendMessage({ type: 'ROOM_DISCONNECTED' }).catch(() => { });
                             } catch (e) { }

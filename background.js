@@ -8,17 +8,50 @@ const DEFAULT_SERVER_URL = 'wss://opensync.onrender.com';
 let currentRoom = null;
 let serverUrl = DEFAULT_SERVER_URL;
 
+const KEEPALIVE_ALARM = 'opensync-server-keepalive';
+
+function getHealthUrl(wsUrl) {
+  return (wsUrl || DEFAULT_SERVER_URL)
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/^ws:\/\//, 'http://') + '/health';
+}
+
+function preWarmServer() {
+  browser.storage.local.get('serverUrl').then(data => {
+    const url = getHealthUrl(data.serverUrl);
+    console.log('[OpenSync] Pre-warming server:', url);
+    fetch(url).catch(() => {});
+  });
+}
+
+// Pre-warm on browser startup and extension install so the server is ready by
+// the time the user needs it (Render free tier takes ~3 min to cold-start)
+browser.runtime.onStartup.addListener(preWarmServer);
+
 // Initialize extension
 browser.runtime.onInstalled.addListener(() => {
   console.log('OpenSync extension installed');
 
-  // Only set defaults for values that don't already exist
   browser.storage.local.get(['serverUrl', 'username']).then(existing => {
     const defaults = {};
     if (!existing.serverUrl) defaults.serverUrl = DEFAULT_SERVER_URL;
-    // Don't set a default username here -- let the popup onboarding handle it
     if (Object.keys(defaults).length > 0) {
       browser.storage.local.set(defaults);
+    }
+  });
+
+  preWarmServer();
+});
+
+// Periodic keepalive: ping /health every 10 min while a room is active
+// to prevent Render from putting the server to sleep
+browser.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 10 });
+
+browser.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== KEEPALIVE_ALARM) return;
+  browser.storage.local.get(['opensync_room', 'serverUrl']).then(data => {
+    if (data.opensync_room) {
+      fetch(getHealthUrl(data.serverUrl)).catch(() => {});
     }
   });
 });

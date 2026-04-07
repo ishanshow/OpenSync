@@ -11,18 +11,37 @@ const OpenSyncWebSocketClient = (function () {
     let reconnectTimer = null;
     let eventCallbacks = {};
     let intentionalDisconnect = false;
+    let isReconnecting = false;
+    let keepaliveInterval = null;
 
     const MAX_RECONNECT_ATTEMPTS = 10;
     const RECONNECT_DELAY = 2000;
     const WS_CONNECT_TIMEOUT = 15000;
+    const KEEPALIVE_INTERVAL = 30000;
 
-    const WAKE_MAX_ATTEMPTS = 24;
+    const WAKE_MAX_ATTEMPTS = 40;
     const WAKE_POLL_INTERVAL = 5000;
 
     function getHttpUrl() {
         return serverUrl
             .replace(/^wss:\/\//, 'https://')
             .replace(/^ws:\/\//, 'http://');
+    }
+
+    function startKeepalive() {
+        stopKeepalive();
+        keepaliveInterval = setInterval(() => {
+            if (isConnected && ws && ws.readyState === WebSocket.OPEN) {
+                send('PING', {});
+            }
+        }, KEEPALIVE_INTERVAL);
+    }
+
+    function stopKeepalive() {
+        if (keepaliveInterval) {
+            clearInterval(keepaliveInterval);
+            keepaliveInterval = null;
+        }
     }
 
     function wakeServer(onStatus) {
@@ -62,7 +81,9 @@ const OpenSyncWebSocketClient = (function () {
     function connect(url, callbacks = {}) {
         serverUrl = url || serverUrl;
         eventCallbacks = callbacks;
-        intentionalDisconnect = false;
+        if (!isReconnecting) {
+            intentionalDisconnect = false;
+        }
 
         return new Promise((resolve, reject) => {
             try {
@@ -73,8 +94,16 @@ const OpenSyncWebSocketClient = (function () {
                     isConnected = true;
                     reconnectAttempts = 0;
 
+                    startKeepalive();
+
+                    const wasReconnecting = isReconnecting;
+                    isReconnecting = false;
+
                     if (eventCallbacks.onConnect) {
                         eventCallbacks.onConnect();
+                    }
+                    if (wasReconnecting && eventCallbacks.onReconnected) {
+                        eventCallbacks.onReconnected();
                     }
                     resolve(true);
                 };
@@ -86,19 +115,30 @@ const OpenSyncWebSocketClient = (function () {
                 ws.onclose = (event) => {
                     console.log('[OpenSync] WebSocket closed', event.code);
                     isConnected = false;
+                    stopKeepalive();
 
-                    if (eventCallbacks.onDisconnect) {
-                        eventCallbacks.onDisconnect();
+                    // During reconnection attempts, close events come from failed
+                    // reconnect sockets -- handled by scheduleReconnect's catch block
+                    if (isReconnecting || intentionalDisconnect) {
+                        return;
                     }
 
-                    if (!intentionalDisconnect && roomCode && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    if (roomCode && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        isReconnecting = true;
+                        if (eventCallbacks.onReconnecting) {
+                            eventCallbacks.onReconnecting(1);
+                        }
                         scheduleReconnect();
+                    } else {
+                        if (eventCallbacks.onDisconnect) {
+                            eventCallbacks.onDisconnect();
+                        }
                     }
                 };
 
                 ws.onerror = (error) => {
                     console.error('[OpenSync] WebSocket error:', error);
-                    if (eventCallbacks.onError) {
+                    if (!isReconnecting && eventCallbacks.onError) {
                         eventCallbacks.onError(error);
                     }
                     reject(error);
@@ -132,8 +172,17 @@ const OpenSyncWebSocketClient = (function () {
                     joinRoom(roomCode, username);
                 }
             } catch (e) {
+                console.log(`[OpenSync] Reconnect attempt ${reconnectAttempts} failed`);
                 if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    if (eventCallbacks.onReconnecting) {
+                        eventCallbacks.onReconnecting(reconnectAttempts + 1);
+                    }
                     scheduleReconnect();
+                } else {
+                    isReconnecting = false;
+                    if (eventCallbacks.onReconnectFailed) {
+                        eventCallbacks.onReconnectFailed();
+                    }
                 }
             }
         }, delay);
@@ -143,7 +192,9 @@ const OpenSyncWebSocketClient = (function () {
     function handleMessage(data) {
         try {
             const message = JSON.parse(data);
-            console.log('[OpenSync] Received:', message.type);
+            if (message.type !== 'PONG') {
+                console.log('[OpenSync] Received:', message.type);
+            }
 
             switch (message.type) {
                 case 'ROOM_CREATED':
@@ -206,7 +257,6 @@ const OpenSyncWebSocketClient = (function () {
                     break;
 
                 case 'SYNC_REQUEST':
-                    // Host should respond with current state
                     if (eventCallbacks.onSyncRequest) {
                         eventCallbacks.onSyncRequest(message.payload);
                     }
@@ -236,6 +286,9 @@ const OpenSyncWebSocketClient = (function () {
                     }
                     break;
 
+                case 'PONG':
+                    break;
+
                 default:
                     console.log('[OpenSync] Unknown message type:', message.type);
             }
@@ -261,43 +314,35 @@ const OpenSyncWebSocketClient = (function () {
         return true;
     }
 
-    // ... (existing create/join room) ...
-
     function sendUrlChange(url, currentTime = 0) {
         return send('URL_CHANGE', { roomCode, url, currentTime });
     }
 
-    // Send video ready signal (after video has loaded and is ready to play)
     function sendVideoReady() {
         return send('VIDEO_READY', { roomCode });
     }
 
-    // Send Force Sync command to all users
     function sendForceSync(currentTime) {
         return send('FORCE_SYNC', { roomCode, currentTime });
     }
 
-    // Create a new room
     function createRoom(user, platform = null) {
         username = user || username;
         return send('CREATE_ROOM', { username, platform });
     }
 
-    // Join an existing room
     function joinRoom(code, user) {
         roomCode = code;
         username = user || username;
         return send('JOIN_ROOM', { roomCode: code, username });
     }
 
-    // Leave room
     function leaveRoom() {
         const result = send('LEAVE_ROOM', { roomCode });
         roomCode = null;
         return result;
     }
 
-    // Send sync state
     function sendSync(state) {
         return send('SYNC', {
             roomCode,
@@ -305,7 +350,6 @@ const OpenSyncWebSocketClient = (function () {
         });
     }
 
-    // Send video control commands
     function sendPlay(currentTime) {
         return send('PLAY', { roomCode, currentTime });
     }
@@ -322,7 +366,6 @@ const OpenSyncWebSocketClient = (function () {
         return send('BUFFER', { roomCode, currentTime, isBuffering });
     }
 
-    // Send chat message
     function sendChat(text) {
         return send('CHAT', {
             roomCode,
@@ -331,15 +374,16 @@ const OpenSyncWebSocketClient = (function () {
         });
     }
 
-    // Request sync from host
     function requestSync() {
         return send('SYNC_REQUEST', { roomCode });
     }
 
-    // Disconnect
     function disconnect() {
         intentionalDisconnect = true;
+        isReconnecting = false;
         roomCode = null;
+
+        stopKeepalive();
 
         if (reconnectTimer) {
             clearTimeout(reconnectTimer);
@@ -355,7 +399,6 @@ const OpenSyncWebSocketClient = (function () {
         isConnected = false;
     }
 
-    // Get connection status
     function getStatus() {
         return {
             isConnected,
