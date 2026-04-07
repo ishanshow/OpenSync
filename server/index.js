@@ -1,32 +1,40 @@
 // OpenSync WebSocket Server
 // Handles room management and video sync between clients
 
-const WebSocket = require('ws');
-const express = require('express');
 const http = require('http');
+const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
 
 // Room storage
 const rooms = new Map();
 
-// Express app for HTTP health checks (required by Render / hosting platforms)
-const app = express();
+// HTTP server for health checks (required by Render and for client wake polling)
+const server = http.createServer((req, res) => {
+    const cors = { 'Access-Control-Allow-Origin': '*' };
 
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'ok',
-        uptime: process.uptime(),
-        rooms: rooms.size,
-        connections: wss.clients.size
-    });
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204, { ...cors, 'Access-Control-Allow-Methods': 'GET, OPTIONS' });
+        res.end();
+        return;
+    }
+
+    if (req.method === 'GET' && req.url === '/health') {
+        const body = JSON.stringify({
+            status: 'ok',
+            uptime: Math.floor(process.uptime()),
+            rooms: rooms.size,
+            connections: wss.clients.size
+        });
+        res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+        res.end(body);
+        return;
+    }
+
+    res.writeHead(404);
+    res.end();
 });
 
-app.get('/', (req, res) => {
-    res.json({ service: 'OpenSync WebSocket Server', status: 'running' });
-});
-
-const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 console.log(`[OpenSync Server] Starting on port ${PORT}...`);
@@ -173,6 +181,11 @@ function handleMessage(ws, clientData, message) {
 
         case 'FORCE_SYNC':
             handleForceSync(clientData, payload);
+            break;
+
+        case 'PING':
+            ws.isAlive = true;
+            sendToClient(ws, 'PONG', {});
             break;
 
         default:
