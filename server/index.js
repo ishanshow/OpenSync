@@ -126,7 +126,9 @@ wss.on('close', () => {
 function handleMessage(ws, clientData, message) {
     const { type, payload } = message;
 
-    console.log('[OpenSync Server] Received:', type);
+    if (type !== 'PING') {
+        console.log('[OpenSync Server] Received:', type);
+    }
 
     switch (type) {
         case 'CREATE_ROOM':
@@ -170,6 +172,10 @@ function handleMessage(ws, clientData, message) {
 
         case 'FORCE_SYNC':
             handleForceSync(clientData, payload);
+            break;
+
+        case 'PING':
+            sendToClient(ws, 'PONG', {});
             break;
 
         default:
