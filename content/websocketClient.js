@@ -47,6 +47,7 @@ const OpenSyncWebSocketClient = (function () {
     function wakeServer(onStatus) {
         const healthUrl = getHttpUrl() + '/health';
         let attempt = 0;
+        const WAKE_FETCH_TIMEOUT = 8000;
 
         return new Promise((resolve, reject) => {
             function poll() {
@@ -54,7 +55,7 @@ const OpenSyncWebSocketClient = (function () {
                 if (onStatus) onStatus('waking', attempt);
                 console.log(`[OpenSync] Wake ping ${attempt}/${WAKE_MAX_ATTEMPTS}: ${healthUrl}`);
 
-                fetch(healthUrl)
+                fetch(healthUrl, { signal: AbortSignal.timeout(WAKE_FETCH_TIMEOUT) })
                     .then(res => {
                         if (res.ok) {
                             console.log('[OpenSync] Server is awake');

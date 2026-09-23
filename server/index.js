@@ -1,6 +1,7 @@
 // OpenSync WebSocket Server
 // Handles room management and video sync between clients
 
+const http = require('http');
 const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
@@ -8,10 +9,24 @@ const PORT = process.env.PORT || 3000;
 // Room storage
 const rooms = new Map();
 
-// Create WebSocket server
-const wss = new WebSocket.Server({ port: PORT });
+// Create HTTP server with /health endpoint so wake pings and health checks work
+const httpServer = http.createServer((req, res) => {
+    if (req.url === '/health' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', rooms: rooms.size, uptime: process.uptime() }));
+    } else {
+        res.writeHead(404);
+        res.end();
+    }
+});
 
-console.log(`[OpenSync Server] Starting on port ${PORT}...`);
+// Create WebSocket server attached to the HTTP server
+const wss = new WebSocket.Server({ server: httpServer });
+
+// Start listening
+httpServer.listen(PORT, () => {
+    console.log(`[OpenSync Server] Starting on port ${PORT}...`);
+});
 
 // Generate random room code
 function generateRoomCode() {
@@ -794,14 +809,15 @@ setInterval(() => {
     });
 }, 60 * 60 * 1000); // Every hour
 
-// Log server ready
-wss.on('listening', () => {
+// Log server ready (httpServer 'listening' fires after httpServer.listen succeeds)
+httpServer.on('listening', () => {
     console.log(`[OpenSync Server] Ready and listening on port ${PORT}`);
     console.log(`[OpenSync Server] WebSocket URL: ws://localhost:${PORT}`);
+    console.log(`[OpenSync Server] Health endpoint: http://localhost:${PORT}/health`);
 });
 
 // Handle server errors
-wss.on('error', (error) => {
+httpServer.on('error', (error) => {
     console.error('[OpenSync Server] Server error:', error);
 });
 
@@ -809,7 +825,9 @@ wss.on('error', (error) => {
 process.on('SIGINT', () => {
     console.log('\n[OpenSync Server] Shutting down...');
     wss.close(() => {
-        console.log('[OpenSync Server] Server closed');
-        process.exit(0);
+        httpServer.close(() => {
+            console.log('[OpenSync Server] Server closed');
+            process.exit(0);
+        });
     });
 });
