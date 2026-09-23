@@ -651,20 +651,29 @@
                 OpenSyncOverlay.updateStatus('Connecting...');
             }
 
+            // Quick wake check — cap at 10s total so room creation isn't blocked
+            // by page CSP blocking the fetch or Render cold-start delays.
+            // If wake fails, we fall through to WebSocket directly.
+            const WAKE_OVERALL_TIMEOUT = 10000;
             try {
-                await OpenSyncWebSocketClient.wakeServer((status, attempt) => {
-                    if (!isMainFrame) return;
-                    if (status === 'waking' && attempt > 1) {
-                        OpenSyncOverlay.updateStatus('Waking server...');
-                        if (attempt === 2) {
-                            OpenSyncOverlay.addSystemMessage('Server is waking up, please wait...');
+                await Promise.race([
+                    OpenSyncWebSocketClient.wakeServer((status, attempt) => {
+                        if (!isMainFrame) return;
+                        if (status === 'waking' && attempt > 1) {
+                            OpenSyncOverlay.updateStatus('Waking server...');
+                            if (attempt === 2) {
+                                OpenSyncOverlay.addSystemMessage('Server is waking up, please wait...');
+                            }
+                        } else if (status === 'ready') {
+                            OpenSyncOverlay.updateStatus('Connecting...');
                         }
-                    } else if (status === 'ready') {
-                        OpenSyncOverlay.updateStatus('Connecting...');
-                    }
-                });
+                    }),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Wake overall timeout')), WAKE_OVERALL_TIMEOUT)
+                    )
+                ]);
             } catch (wakeErr) {
-                console.warn('[OpenSync] Server wake failed, attempting WS connect anyway:', wakeErr.message);
+                console.warn('[OpenSync] Server wake skipped, connecting directly:', wakeErr.message);
             }
 
             await OpenSyncWebSocketClient.connect(serverUrl, {

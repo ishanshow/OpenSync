@@ -9,13 +9,27 @@ const PORT = process.env.PORT || 3000;
 // Room storage
 const rooms = new Map();
 
+// CORS headers for cross-origin health checks from extension content scripts
+const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+};
+
 // Create HTTP server with /health endpoint so wake pings and health checks work
 const httpServer = http.createServer((req, res) => {
+    // Handle CORS preflight
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204, CORS_HEADERS);
+        res.end();
+        return;
+    }
+
     if (req.url === '/health' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { 'Content-Type': 'application/json', ...CORS_HEADERS });
         res.end(JSON.stringify({ status: 'ok', rooms: rooms.size, uptime: process.uptime() }));
     } else {
-        res.writeHead(404);
+        res.writeHead(404, CORS_HEADERS);
         res.end();
     }
 });
